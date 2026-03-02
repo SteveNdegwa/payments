@@ -59,9 +59,9 @@ class MpesaDarajaProvider(BaseProvider):
                 },
             )
 
-            shortcode = self.config.get("business_shortcode")
-            passkey = self.config.get("business_passkey")
-            base_url = self.config.get("base_url")
+            shortcode = self.config["business_shortcode"]
+            passkey = self.config["business_passkey"]
+            base_url = self.config["base_url"]
 
             if not all([shortcode, passkey, base_url]):
                 raise ValueError("Missing required Daraja configuration.")
@@ -81,7 +81,7 @@ class MpesaDarajaProvider(BaseProvider):
                 "Password": password,
                 "Timestamp": timestamp,
                 "TransactionType": "CustomerPayBillOnline",
-                "Amount": int(amount),  # Daraja expects integer
+                "Amount": int(amount),
                 "PartyA": phone_number,
                 "PartyB": shortcode,
                 "PhoneNumber": phone_number,
