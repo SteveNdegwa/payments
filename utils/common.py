@@ -88,3 +88,16 @@ def get_client_ip(request: WSGIRequest) -> str:
 
     remote_addr = clean_ip(request.META.get('REMOTE_ADDR'))
     return remote_addr
+
+
+def check_required_fields(payload: dict[str, Any], required_fields: set[str]) -> None:
+    missing_fields = {
+        field
+        for field in required_fields
+        if field not in payload or payload[field] in (None, "", [])
+    }
+
+    if missing_fields:
+        raise ValueError(
+            f"Missing or empty required fields: {', '.join(sorted(missing_fields))}"
+        )

@@ -1,7 +1,9 @@
 import logging
+import os
 from datetime import timedelta
 from decimal import Decimal
 from typing import Optional
+from urllib.parse import urljoin
 
 from django.db import transaction as db_transaction
 from django.utils import timezone
@@ -91,9 +93,18 @@ class TransactionExecutor:
     def run(self) -> Transaction:
         txn = self._create_transaction()
         provider = self._load_provider()
+        self._inject_callback_url(txn)
         result = self._call_provider(provider, txn)
         txn = self._persist_result(txn, result)
         return txn
+
+    def _inject_callback_url(self, txn: Transaction) -> None:
+        base_url = os.getenv("BASE_URL")
+        if not base_url:
+            raise ValueError("BASE_URL environment variable is not configured.")
+        base_url = base_url.strip().rstrip("/")
+        callback_path = f"/core/payments/callbacks/{txn.provider.slug}/{txn.id}/"
+        self.request_payload["callback_url"] = urljoin(f"{base_url}/", callback_path.lstrip("/"))
 
     def _create_transaction(self) -> Transaction:
         with db_transaction.atomic():

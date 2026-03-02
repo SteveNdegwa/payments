@@ -1,4 +1,5 @@
 import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
@@ -29,11 +30,15 @@ class ProviderResult:
     amount_processed: Optional[Decimal] = None
 
 
-class BaseProvider:
+class BaseProvider(ABC):
     def __init__(self, credentials: dict, config: dict | None = None):
         self.credentials = credentials
         self.config = config or {}
+        self._validate_config()
 
+    @abstractmethod
+    def _validate_config(self) -> None:
+        raise NotImplementedError
 
     # Core payment flows
     def charge(self, *, amount: Decimal, currency: str, payload: dict) -> ProviderResult:
