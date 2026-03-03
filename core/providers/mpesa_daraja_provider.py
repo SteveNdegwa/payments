@@ -106,7 +106,7 @@ class MpesaDarajaProvider(BaseProvider):
 
             return ProviderResult(
                 status=ProviderResultStatus.REQUIRES_ACTION,
-                provider_reference=response_data.get("CheckoutRequestID"),
+                provider_transaction_id=response_data.get("CheckoutRequestID"),
                 raw_response=response_data,
             )
 
@@ -277,11 +277,13 @@ class MpesaDarajaProvider(BaseProvider):
 
             result_code = stk.get("ResultCode")
             checkout_id = stk.get("CheckoutRequestID")
+            merchant_id = stk.get("MerchantRequestID")
 
             if result_code == 0:
                 return ProviderResult(
                     status=ProviderResultStatus.SUCCESS,
-                    provider_reference=checkout_id,
+                    provider_transaction_id=checkout_id,
+                    provider_reference=merchant_id,
                     raw_response=payload,
                 )
 

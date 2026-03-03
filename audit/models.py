@@ -131,8 +131,8 @@ class AuditLog(BaseModel):
 
 
 class AuditConfiguration(BaseModel):
-    model_name = models.CharField(max_length=100, unique=True)
     app_label = models.CharField(max_length=100)
+    model_name = models.CharField(max_length=100, unique=True)
     is_enabled = models.BooleanField(default=True)
     track_create = models.BooleanField(default=True)
     track_update = models.BooleanField(default=True)
@@ -148,3 +148,8 @@ class AuditConfiguration(BaseModel):
 
     def __str__(self):
         return f'{self.app_label}.{self.model_name}'
+
+    def save(self, *args, **kwargs):
+        self.app_label = self.app_label.lower()
+        self.model_name = self.model_name.lower()
+        super().save(*args, **kwargs)

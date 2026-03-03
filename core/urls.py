@@ -35,6 +35,4 @@ urlpatterns = [
         views.provider_callback,
         name="provider-callback",
     ),
-
-    path("payments/test/", views.test)
 ]

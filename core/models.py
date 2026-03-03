@@ -3,6 +3,8 @@ import re
 import secrets
 from django.db import models
 from django.utils import timezone
+from django.utils.html import format_html
+
 from base.models import BaseModel
 
 
@@ -13,13 +15,7 @@ def generate_api_key():
 class System(BaseModel):
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True)
-    hashed_api_key = models.CharField(
-        max_length=255,
-        default=generate_api_key,
-        editable=False,
-        blank=False,
-        help_text="Auto-generated secure API key (SHA-256 hashed on save). Do not edit manually."
-    )
+    hashed_api_key = models.CharField(max_length=255, editable=False, blank=True)
     allowed_ips = models.JSONField(default=list, blank=True)
     webhook_url = models.URLField()
     webhook_secret = models.CharField(max_length=255, null=True, blank=True)
@@ -139,6 +135,10 @@ class ChargeableEvent(BaseModel):
         CHARGE = "CHARGE", "Single-step Charge"
         AUTHORIZE_CAPTURE = "AUTHORIZE_CAPTURE", "Authorize & Capture"
 
+    class CallbackDestination(models.TextChoices):
+        SYSTEM = "SYSTEM", "To owning System"
+        SOURCE_SYSTEM = "SOURCE_SYSTEM", "To the Source System that initiated the payment"
+
     system = models.ForeignKey(
         System,
         on_delete=models.PROTECT,
@@ -184,6 +184,18 @@ class ChargeableEvent(BaseModel):
         blank=True
     )
     currency = models.CharField(max_length=3, default="KES")
+    callback_destination = models.CharField(
+        max_length=20,
+        choices=CallbackDestination.choices,
+        default=CallbackDestination.SYSTEM,
+        help_text=format_html(
+            "<b>Determines which system's webhook URL receives payment webhooks.</b><br><br>"
+            "• <b>SYSTEM</b>: Always send to this ChargeableEvent.system.webhook_url.<br>"
+            "• <b>SOURCE_SYSTEM</b>: Send to payment_intent.source_system.webhook_url "
+            "if it exists. If no source system is set, the webhook will fall back "
+            "to the owning ChargeableEvent.system.webhook_url."
+        ),
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -519,11 +531,16 @@ class WebhookDeliveryLog(BaseModel):
     duration_ms = models.IntegerField(null=True, blank=True)
     error_message = models.TextField(blank=True)
 
-    class Meta:
-        ordering = ["attempt_number"]
-
 
 class ProviderCallbackLog(BaseModel):
+    class Status(models.TextChoices):
+        RECEIVED = "RECEIVED", "Received"
+        PROCESSING = "PROCESSING", "Processing"
+        PROCESSED = "PROCESSED", "Processed"
+        FAILED = "FAILED", "Failed"
+        REJECTED = "REJECTED", "Rejected"
+        IGNORED = "IGNORED", "Ignored"
+
     provider = models.ForeignKey(
         Provider,
         on_delete=models.PROTECT,
@@ -539,11 +556,18 @@ class ProviderCallbackLog(BaseModel):
     raw_headers = models.JSONField(default=dict)
     raw_payload = models.JSONField()
     parsed_status = models.CharField(max_length=50, blank=True)
-    processed = models.BooleanField(default=False)
     processing_error = models.TextField(blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.RECEIVED,
+        db_index=True,
+    )
 
     class Meta:
-        indexes = [models.Index(fields=["processed", "created_at"])]
+        indexes = [
+            models.Index(fields=["status", "created_at"]),
+        ]
 
 
 class ReconciliationRecord(BaseModel):

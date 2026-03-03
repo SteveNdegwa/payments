@@ -18,7 +18,7 @@ from core.models import (
     ReconciliationRecord,
     Transaction,
     WebhookOutbox,
-    WebhookDeliveryLog,
+    WebhookDeliveryLog, ProviderCallbackLog,
 )
 
 logger = logging.getLogger(__name__)
@@ -132,6 +132,41 @@ def task_refund(
 
 
 @shared_task(
+    name="payments.process_provider_callback",
+    queue="payments.high",
+    bind=True,
+    **_PROVIDER_RETRY,
+)
+def task_process_provider_callback(self, callback_log_id: str):
+    from core.services.payment_services import PaymentServices
+
+    try:
+        log = ProviderCallbackLog.objects.select_related(
+            "transaction__provider_account__provider",
+            "transaction__payment_intent__chargeable_event",
+        ).get(id=callback_log_id)
+    except ProviderCallbackLog.DoesNotExist:
+        logger.error("Callback log %s disappeared", callback_log_id)
+        return
+
+    if log.status == ProviderCallbackLog.Status.PROCESSED:
+        logger.info("Callback %s already processed — skipping", log.id)
+        return
+
+    log.status = ProviderCallbackLog.Status.PROCESSING
+    log.save(update_fields=["status"])
+
+    try:
+        PaymentServices.process_provider_callback(log)
+        log.status = ProviderCallbackLog.Status.PROCESSED
+        log.save(update_fields=["status"])
+    except Exception as exc:
+        log.status = ProviderCallbackLog.Status.FAILED
+        log.processing_error = f"{type(exc).__name__}: {str(exc)}"
+        log.save(update_fields=["status", "processing_error"])
+
+
+@shared_task(
     name="payments.reconcile_transaction",
     queue="payments.low",
     bind=True,
@@ -215,7 +250,6 @@ def task_scan_overdue_reconciliations():
     for txn_id in overdue_ids:
         task_reconcile_transaction.apply_async(
             kwargs={"transaction_id": str(txn_id)},
-            queue="payments.low",
         )
         count += 1
 
@@ -246,7 +280,6 @@ def task_deliver_webhook(self, outbox_id: str):
     if outbox.status == WebhookOutbox.Status.DELIVERED:
         return
 
-    # Mark as in-flight so the beat scan doesn't re-queue it concurrently
     outbox.status = WebhookOutbox.Status.PROCESSING
     outbox.attempt_count += 1
     outbox.last_attempted_at = timezone.now()
@@ -272,7 +305,6 @@ def task_deliver_webhook(self, outbox_id: str):
     response_body = ""
     response_headers = {}
     error_message = ""
-    new_status = WebhookOutbox.Status.FAILED
 
     try:
         resp = requests.post(
@@ -290,6 +322,8 @@ def task_deliver_webhook(self, outbox_id: str):
         error_message = str(exc)
         if outbox.attempt_count >= outbox.max_attempts:
             new_status = WebhookOutbox.Status.EXHAUSTED
+        else:
+            new_status = WebhookOutbox.Status.FAILED
 
     duration_ms = int((time.monotonic() - start) * 1000)
 
@@ -333,7 +367,6 @@ def task_scan_failed_webhooks():
     for outbox_id in list(due) + list(stale):
         task_deliver_webhook.apply_async(
             kwargs={"outbox_id": str(outbox_id)},
-            queue="payments.low",
         )
         count += 1
 

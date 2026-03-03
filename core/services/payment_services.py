@@ -15,6 +15,7 @@ from core.models import (
     Transaction,
     WebhookOutbox, Provider, ProviderCallbackLog, ReconciliationRecord, TransactionStateLog, PaymentMethodToken,
 )
+from core.providers.base_provider import ProviderResultStatus
 from core.services.executor import TransactionExecutor
 from core.services.registry import get_provider_instance
 
@@ -104,14 +105,12 @@ class PaymentServices:
 
         if pi.chargeable_event.flow == ChargeableEvent.Flow.CHARGE:
             task_charge.apply_async(
-                kwargs={"payment_intent_id": str(pi.id)},
-                queue="payments.high",
+                kwargs={"payment_intent_id": str(pi.id)}
             )
 
         elif pi.chargeable_event.flow == ChargeableEvent.Flow.AUTHORIZE_CAPTURE:
             task_authorize.apply_async(
-                kwargs={"payment_intent_id": str(pi.id)},
-                queue="payments.high",
+                kwargs={"payment_intent_id": str(pi.id)}
             )
 
     @classmethod
@@ -147,7 +146,6 @@ class PaymentServices:
                 "amount": str(capture_amount),
                 "payload": payload or {},
             },
-            queue="payments.high",
         )
         return result.id
 
@@ -167,7 +165,6 @@ class PaymentServices:
 
         result = task_void.apply_async(
             kwargs={"payment_intent_id": str(pi.id), "payload": payload or {}},
-            queue="payments.high",
         )
         return result.id
 
@@ -209,7 +206,6 @@ class PaymentServices:
                 "amount": str(refund_amount),
                 "payload": payload or {},
             },
-            queue="payments.high",
         )
         return result.id
 
@@ -374,7 +370,7 @@ class PaymentServices:
         return txn
 
     @classmethod
-    def process_provider_callback(
+    def receive_provider_callback(
             cls,
             *,
             provider_slug: str,
@@ -382,27 +378,18 @@ class PaymentServices:
             headers: dict,
             raw_payload: dict,
     ) -> None:
-        from core.tasks import task_reconcile_transaction
-        from core.services.executor import ProviderResultStatus
+        from core.tasks import task_process_provider_callback
 
         try:
             provider = Provider.objects.get(slug=provider_slug, is_active=True)
         except Provider.DoesNotExist:
-            logger.error(
-                "process_provider_callback: unknown provider slug '%s'", provider_slug
-            )
+            logger.warning("Callback for unknown provider %s", provider_slug)
             return
 
         try:
-            txn = Transaction.objects.select_related(
-                "provider_account",
-                "payment_intent__chargeable_event",
-            ).get(id=transaction_id, provider=provider)
+            txn = Transaction.objects.get(id=transaction_id, provider=provider)
         except Transaction.DoesNotExist:
-            logger.error(
-                "process_provider_callback: TXN '%s' not found for provider '%s'",
-                transaction_id, provider_slug,
-            )
+            logger.warning("Callback for non-existing transaction %s", transaction_id)
             return
 
         log = ProviderCallbackLog.objects.create(
@@ -410,42 +397,46 @@ class PaymentServices:
             transaction=txn,
             raw_headers=headers,
             raw_payload=raw_payload,
+            status=ProviderCallbackLog.Status.RECEIVED,
         )
 
+        task_process_provider_callback.apply_async(
+            kwargs={"callback_log_id": str(log.id)},
+        )
+
+    @classmethod
+    def process_provider_callback(cls, log: ProviderCallbackLog) -> None:
+        txn = log.transaction
+        provider = log.provider
         account = txn.provider_account
+
+        if txn.is_terminal:
+            log.status = ProviderCallbackLog.Status.IGNORED
+            log.processing_error = f"Ignored: transaction is already terminal ({txn.status})"
+            log.save(update_fields=["status", "processing_error"])
+            return
+
         provider_instance = get_provider_instance(
             class_name=provider.class_name,
             credentials=account.credentials,
             config=account.extra_config,
         )
 
-        if not provider_instance.verify_callback(headers=headers, payload=raw_payload):
-            log.processing_error = (
-                f"Invalid signature (verified against account '{account.name}')"
-            )
-            log.save(update_fields=["processing_error"])
-            logger.warning(
-                "process_provider_callback: invalid signature for provider '%s' "
-                "account '%s'", provider_slug, account.name,
-            )
+        # Verify signature
+        if not provider_instance.verify_callback(headers=log.raw_headers, payload=log.raw_payload):
+            log.status = ProviderCallbackLog.Status.REJECTED
+            log.processing_error = "Invalid signature"
+            log.save(update_fields=["status", "processing_error"])
             return
 
-        result = provider_instance.parse_callback(payload=raw_payload)
+        result = provider_instance.parse_callback(payload=log.raw_payload)
 
         log.parsed_status = str(result.status.value)
-        log.processed = True
-        log.save(update_fields=["parsed_status", "processed"])
+        log.save(update_fields=["parsed_status"])
 
-        if txn.is_terminal:
-            return
-
-        if result.status in (ProviderResultStatus.PENDING, ProviderResultStatus.UNKNOWN):
-            # Process provider callback is inconclusive so we schedule a reconciliation poll
-            task_reconcile_transaction.apply_async(
-                kwargs={"transaction_id": str(txn.id)},
-                queue="payments.low",
-            )
-            return
+        # if result.status in (ProviderResultStatus.PENDING, ProviderResultStatus.UNKNOWN):
+        #     cls.schedule_reconciliation(txn)
+        #     return
 
         cls.apply_provider_result(txn=txn, result=result, actor="webhook")
 
@@ -525,9 +516,25 @@ class PaymentServices:
 
         task_capture.apply_async(
             kwargs={"payment_intent_id": str(pi.id)},
-            queue="payments.high",
             eta=eta,
         )
+
+    @classmethod
+    def schedule_reconciliation(cls, transaction: Transaction, delay_seconds: int = 60) -> None:
+        from core.tasks import task_reconcile_transaction
+
+        if transaction.is_terminal:
+            return
+
+        rec, _ = ReconciliationRecord.objects.get_or_create(transaction=transaction)
+
+        eta = timezone.now() + timedelta(seconds=delay_seconds)
+        task_reconcile_transaction.apply_async(
+            kwargs={"transaction_id": str(transaction.id)},
+            eta=eta,
+        )
+        rec.last_attempted_at = timezone.now()
+        rec.save(update_fields=["last_attempted_at"])
 
     @classmethod
     def _get_intent_for_execution(
@@ -599,8 +606,14 @@ class PaymentServices:
     @classmethod
     def _enqueue_webhook(cls, pi: PaymentIntent, txn: Transaction) -> None:
         event_type = cls._webhook_event_type(pi.status)
+
+        if pi.chargeable_event.callback_destination == ChargeableEvent.CallbackDestination.SYSTEM:
+            system = pi.system
+        else:
+            system = pi.source_system or pi.system
+
         outbox = WebhookOutbox.objects.create(
-            system=pi.system,
+            system=system,
             payment_intent=pi,
             transaction=txn,
             event_type=event_type,
@@ -617,13 +630,12 @@ class PaymentServices:
                 "next_action": pi.next_action,
                 "metadata": pi.metadata,
             },
-            destination_url=pi.system.webhook_url,
+            destination_url=system.webhook_url,
         )
 
         from core.tasks import task_deliver_webhook
         task_deliver_webhook.apply_async(
             kwargs={"outbox_id": str(outbox.id)},
-            queue="payments.low",
         )
 
     @staticmethod

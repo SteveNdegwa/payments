@@ -91,14 +91,10 @@ def provider_callback(
     provider_slug: str,
     transaction_id: str,
 ) -> JsonResponse:
-    PaymentServices.process_provider_callback(
+    PaymentServices.receive_provider_callback(
         provider_slug=provider_slug,
         transaction_id=transaction_id,
         headers=dict(request.headers),
         raw_payload=request.data,
     )
     return ResponseProvider.success(message="Received")
-
-def test(request):
-    print(request.data)
-    return ResponseProvider.success(message="test")

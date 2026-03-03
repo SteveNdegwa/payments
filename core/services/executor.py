@@ -238,10 +238,6 @@ class TransactionExecutor:
                 "next_action", "status",
             ])
 
-            # Reconciliation record for async providers
-            if new_txn_status == Transaction.Status.PENDING:
-                ReconciliationRecord.objects.get_or_create(transaction=txn)
-
         return txn
 
     def _transition(self, txn: Transaction, to_status: str, reason: str = ""):

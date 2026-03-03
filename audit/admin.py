@@ -103,7 +103,8 @@ class RequestLogAdmin(admin.ModelAdmin):
         }),
         (_('Client & Authentication'), {
             'fields': (
-                ('api_client', 'user'),
+                'api_client',
+                'user,'
                 'is_authenticated',
                 'ip_address',
                 'user_agent',
@@ -143,7 +144,8 @@ class RequestLogAdmin(admin.ModelAdmin):
         }),
         (_('Audit Fields'), {
             'fields': (
-                ('created_at', 'updated_at'),
+                'created_at',
+                'updated_at',
                 'synced',
                 'id',
             ),
@@ -229,8 +231,8 @@ class RequestLogAdmin(admin.ModelAdmin):
 @admin.register(AuditLog)
 class AuditLogAdmin(admin.ModelAdmin):
     list_display = (
-        'created_at_relative',
         'summary',
+        'created_at_relative',
         'colored_severity',
         'event_type',
         'user_or_system',
@@ -284,7 +286,8 @@ class AuditLogAdmin(admin.ModelAdmin):
     fieldsets = (
         (_('Actor & Context'), {
             'fields': (
-                ('user', 'api_client'),
+                'user',
+                'api_client',
                 'ip_address',
                 'user_agent',
                 'request_method',
@@ -322,7 +325,8 @@ class AuditLogAdmin(admin.ModelAdmin):
         }),
         (_('System Fields'), {
             'fields': (
-                ('created_at', 'updated_at'),
+                'created_at',
+                'updated_at',
                 'synced',
                 'id',
             ),
@@ -495,7 +499,8 @@ class AuditConfigurationAdmin(admin.ModelAdmin):
         }),
         (_('System'), {
             'fields': (
-                ('created_at', 'updated_at'),
+                'created_at',
+                'updated_at',
                 'synced',
                 'id',
             ),

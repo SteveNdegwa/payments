@@ -18,9 +18,10 @@ def format_datetime_admin(dt):
     if dt is None:
         return "—"
 
-    now = timezone.now()
-    delta = now - dt
-    time_str = dt.strftime("%H:%M")
+    dt_local = timezone.localtime(dt)
+    now = timezone.localtime(timezone.now())
+    delta = now - dt_local
+    time_str = dt_local.strftime("%H:%M")
 
     if delta.days == 0:
         return f"today {time_str}"
@@ -29,12 +30,12 @@ def format_datetime_admin(dt):
     if delta.days <= 3:
         return f"{delta.days}d ago {time_str}"
     if delta.days <= 14:
-        return dt.strftime("%a %H:%M")
+        return dt_local.strftime("%a %H:%M")
     if delta.days <= 62:
-        return dt.strftime("%b %d %H:%M")
-    if now.year == dt.year:
-        return dt.strftime("%b %d")
-    return dt.strftime("%Y-%m-%d")
+        return dt_local.strftime("%b %d %H:%M")
+    if now.year == dt_local.year:
+        return dt_local.strftime("%b %d")
+    return dt_local.strftime("%Y-%m-%d")
 
 
 class TransactionInline(admin.TabularInline):
@@ -60,6 +61,7 @@ class TransactionInline(admin.TabularInline):
     ]
     ordering = ['-created_at']
     show_change_link = True
+    classes = ('collapse',)
 
     def has_add_permission(self, request, obj=None):
         return False
@@ -149,6 +151,7 @@ class TransactionStateLogInline(admin.TabularInline):
     ordering = ['-created_at']
     verbose_name = "State Change"
     verbose_name_plural = "State History"
+    classes = ('collapse',)
 
     def has_add_permission(self, request, obj=None):
         return False
@@ -157,6 +160,77 @@ class TransactionStateLogInline(admin.TabularInline):
         return False
 
     @admin.display(description='When', ordering='created_at')
+    def created_at_display(self, obj):
+        return format_datetime_admin(obj.created_at)
+
+
+class WebhookOutboxInline(admin.TabularInline):
+    model = WebhookOutbox
+    extra = 0
+    max_num = 12
+    can_delete = False
+    readonly_fields = [
+        'event_type',
+        'status_colored',
+        'attempt_count_display',
+        'next_attempt_at',
+        'last_attempted_at',
+        'created_at_display',
+    ]
+    fields = [
+        'event_type',
+        'status_colored',
+        'attempt_count_display',
+        'next_attempt_at',
+        'last_attempted_at',
+        'created_at_display',
+    ]
+    ordering = ['-created_at']
+    show_change_link = True
+    classes = ('collapse',)
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description='Status')
+    def status_colored(self, obj):
+        colors = {
+            'DELIVERED': '#28a745',
+            'FAILED': '#dc3545',
+            'EXHAUSTED': '#dc3545',
+            'PROCESSING': '#fd7a14',
+            'PENDING': '#6c757d',
+        }
+        color = colors.get(obj.status, '#6c757d')
+        return format_html(
+            '<span style="color:{}; font-weight:500">{}</span>',
+            color, obj.status
+        )
+
+    @admin.display(description='Attempts')
+    def attempt_count_display(self, obj):
+        if obj.attempt_count == 0:
+            return "—"
+        color = '#dc3545' if obj.status in ['FAILED', 'EXHAUSTED'] else '#6c757d'
+        return format_html(
+            '<span style="color:{}">{}/{}</span>',
+            color, obj.attempt_count, obj.max_attempts
+        )
+
+    @admin.display(description='Next attempt')
+    def next_attempt_at(self, obj):
+        if not obj.next_attempt_at:
+            return "—"
+        return format_datetime_admin(obj.next_attempt_at)
+
+    @admin.display(description='Last attempted')
+    def last_attempted_at(self, obj):
+        return format_datetime_admin(obj.last_attempted_at)
+
+    @admin.display(description='Created', ordering='created_at')
     def created_at_display(self, obj):
         return format_datetime_admin(obj.created_at)
 
@@ -175,6 +249,7 @@ class WebhookDeliveryLogInline(admin.TabularInline):
     ]
     readonly_fields = fields
     ordering = ['attempt_number']
+    classes = ('collapse',)
 
     def has_add_permission(self, request, obj=None):
         return False
@@ -216,7 +291,7 @@ class SystemAdmin(admin.ModelAdmin):
         'allowed_currencies_short',
         'created_at_display',
     ]
-    list_filter = ['is_active', 'allowed_currencies']
+    list_filter = ['is_active']
     search_fields = ['name', 'slug']
     readonly_fields = ['created_at', 'updated_at', 'synced', 'id', 'hashed_api_key']
 
@@ -225,15 +300,15 @@ class SystemAdmin(admin.ModelAdmin):
         ('Security', {
             'fields': ('hashed_api_key', 'allowed_ips'),
             'classes': ('wide',),
-            'description': (
-                "The API key is generated automatically when creating a new System. "
-                "It will be displayed **only once** in the success message below the form after saving. "
-                "You can reset it later using the \"Reset API Key\" action in the actions dropdown."
+            'description': format_html(
+                'API key is auto-generated on creation and shown <strong>only once</strong> after save.'
             )
         }),
-        ('Limits', {'fields': ('rate_limit_per_minute', 'max_transaction_amount', 'daily_volume_limit', 'allowed_currencies')}),
+        ('Limits', {'fields': (
+            'rate_limit_per_minute', 'max_transaction_amount', 'daily_volume_limit', 'allowed_currencies'
+        )}),
         ('Webhook', {'fields': ('webhook_url', 'webhook_secret')}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
+        ('Audit', {'fields': ('created_at', 'updated_at', 'synced', 'id'), 'classes': ('collapse',)}),
     )
 
     actions = ['reset_api_key']
@@ -248,16 +323,24 @@ class SystemAdmin(admin.ModelAdmin):
             messages.success(
                 request,
                 format_html(
-                    '<div style="background:#d4edda; color:#155724; padding:12px; border:1px solid #c3e6cb; '
-                    'border-radius:4px; margin:10px 0;">'
-                    '<strong>API Key generated – copy it now!</strong><br>'
-                    'This key will <strong>never be shown again</strong>.<br><br>'
-                    '<code style="font-size:1.4em; background:#fff; padding:8px 12px; border:1px solid #ced4da; '
-                    'border-radius:4px; font-family:monospace;">'
-                    '{}</code><br><br>'
-                    '<small>Store it securely immediately. '
-                    'You can generate a new one later using the "Reset API Key" action.</small>'
+                    '<div class="alert alert-info alert-dismissible fade show" role="alert" '
+                    'style="margin: 1rem 0; padding: 0.75rem 1.25rem; border-radius: 0.375rem; '
+                    'background-color: var(--bs-info-bg, #cff4fc); '
+                    'border-color: var(--bs-info-border-subtle, #b6effb); '
+                    'color: var(--bs-info-text, #055160); font-size: 0.95rem;">'
+
+                    '<strong>API key generated</strong><br>'
+                    'New key for <strong>{}</strong>:<br>'
+                    '<code style="font-size: 1.15rem; padding: 0.4rem 0.6rem; background: white; '
+                    'border: 1px solid #ced4da; border-radius: 0.25rem; font-family: monospace; '
+                    'display: inline-block; margin: 0.5rem 0;">'
+                    '{}</code><br>'
+                    '<small style="opacity: 0.9;">'
+                    'Copy and store it securely now — it will not be shown again. '
+                    'Reset anytime via Actions → Reset API Key.'
+                    '</small>'
                     '</div>',
+                    obj.name,
                     plain_key
                 ),
                 extra_tags='safe html'
@@ -283,14 +366,22 @@ class SystemAdmin(admin.ModelAdmin):
         self.message_user(
             request,
             format_html(
-                '<div style="background:#d4edda; color:#155724; padding:12px; border:1px solid #c3e6cb; '
-                'border-radius:4px; margin:10px 0;">'
-                '<strong>API key reset successfully for {}</strong><br><br>'
-                'New API Key – <strong>copy it now!</strong> It will never be shown again.<br><br>'
-                '<code style="font-size:1.4em; background:#fff; padding:8px 12px; border:1px solid #ced4da; '
-                'border-radius:4px; font-family:monospace;">'
-                '{}</code><br><br>'
-                '<small>The previous key is now invalid. Update the client immediately.</small>'
+                '<div class="alert alert-info alert-dismissible fade show" role="alert" '
+                'style="margin: 1rem 0; padding: 0.75rem 1.25rem; border-radius: 0.375rem; '
+                'background-color: var(--bs-info-bg, #cff4fc); '
+                'border-color: var(--bs-info-border-subtle, #b6effb); '
+                'color: var(--bs-info-text, #055160); font-size: 0.95rem;">'
+
+                '<strong>API key reset</strong><br>'
+                'New key for <strong>{}</strong>:<br>'
+                '<code style="font-size: 1.15rem; padding: 0.4rem 0.6rem; background: white; '
+                'border: 1px solid #ced4da; border-radius: 0.25rem; font-family: monospace; '
+                'display: inline-block; margin: 0.5rem 0;">'
+                '{}</code><br>'
+                '<small style="opacity: 0.9;">'
+                'Copy and store it securely now — it will not be shown again. '
+                'Previous key is now invalid. Update the client.'
+                '</small>'
                 '</div>',
                 obj.name,
                 plain_key
@@ -299,7 +390,7 @@ class SystemAdmin(admin.ModelAdmin):
             extra_tags='safe html'
         )
 
-    reset_api_key.short_description = "Reset API Key (shows new key once)"
+    reset_api_key.short_description = "Reset API Key"
 
     @admin.display(description='Active')
     def is_active_colored(self, obj):
@@ -328,7 +419,7 @@ class PaymentMethodTypeAdmin(admin.ModelAdmin):
 
     fieldsets = (
         (None, {'fields': ('code', 'name', 'is_active')}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
+        ('Audit', {'fields': ('created_at', 'updated_at', 'synced', 'id'), 'classes': ('collapse',)}),
     )
 
     @admin.display(description='Active')
@@ -358,7 +449,7 @@ class ProviderAdmin(admin.ModelAdmin):
         ('Capabilities', {'fields': (('is_async', 'supports_refund', 'supports_partial_refund'), ('supports_authorize_capture', 'supports_3ds'))}),
         ('Reconciliation', {'fields': ('reconciliation_timeout_seconds',)}),
         ('Status', {'fields': ('is_active',)}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
+        ('Audit', {'fields': ('created_at', 'updated_at', 'synced', 'id'), 'classes': ('collapse',)}),
     )
 
     @admin.display(description='Active')
@@ -389,7 +480,7 @@ class ProviderAccountAdmin(admin.ModelAdmin):
     fieldsets = (
         (None, {'fields': ('provider', 'name', 'environment', 'is_default', 'is_active')}),
         ('Configuration', {'fields': ('credentials', 'extra_config'), 'classes': ('wide',)}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
+        ('Audit', {'fields': ('created_at', 'updated_at', 'synced', 'id'), 'classes': ('collapse',)}),
     )
 
     @admin.display(description='Default')
@@ -408,7 +499,10 @@ class ProviderAccountAdmin(admin.ModelAdmin):
 
 @admin.register(ChargeableEvent)
 class ChargeableEventAdmin(admin.ModelAdmin):
-    list_display = ['__str__', 'system', 'provider', 'flow', 'currency', 'fixed_amount', 'is_active_colored']
+    list_display = [
+        '__str__', 'system', 'provider', 'flow', 'currency', 'fixed_amount',
+        'callback_destination', 'is_active_colored'
+    ]
     list_filter = ['system', 'provider', 'flow', 'currency', 'is_active']
     search_fields = ['name', 'slug', 'system__slug', 'provider__name']
     readonly_fields = ['created_at', 'updated_at', 'synced', 'id']
@@ -418,8 +512,13 @@ class ChargeableEventAdmin(admin.ModelAdmin):
         ('Identity', {'fields': ('system', 'name', 'slug', 'description')}),
         ('Processing', {'fields': ('provider', 'provider_account', 'flow', 'auto_capture', 'capture_delay_hours')}),
         ('Amount', {'fields': ('fixed_amount', 'currency')}),
+        ('Webhook / Callback', {
+            'fields': ('callback_destination',),
+            'classes': ('wide',),
+            'description': "Controls which system receives payment status callbacks / webhooks."
+        }),
         ('Status', {'fields': ('is_active',)}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
+        ('Audit', {'fields': ('created_at', 'updated_at', 'synced', 'id'), 'classes': ('collapse',)}),
     )
 
     @admin.display(description='Active')
@@ -439,7 +538,7 @@ class PaymentMethodTokenAdmin(admin.ModelAdmin):
         ('Token', {'fields': ('system', 'provider', 'token_type', 'provider_token')}),
         ('Details', {'fields': ('masked_identifier', 'card_brand', ('expiry_month', 'expiry_year'), 'customer_ref')}),
         ('Status', {'fields': ('is_active',)}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
+        ('Audit', {'fields': ('created_at', 'updated_at', 'synced', 'id'), 'classes': ('collapse',)}),
     )
 
     @admin.display(description='Expiry')
@@ -480,7 +579,7 @@ class PaymentIntentAdmin(admin.ModelAdmin):
         ('State', {'fields': ('status', 'next_action', 'expires_at')}),
         ('References', {'fields': ('idempotency_key', 'external_reference', 'payment_payload'), 'classes': ('wide',)}),
         ('Metadata', {'fields': ('metadata',), 'classes': ('collapse',)}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
+        ('Audit', {'fields': ('created_at', 'updated_at', 'synced', 'id'), 'classes': ('collapse',)}),
     )
 
     @admin.display(description='Status')
@@ -527,7 +626,10 @@ class TransactionAdmin(admin.ModelAdmin):
     list_filter = ['transaction_type', 'status', 'provider', 'currency', 'created_at']
     search_fields = ['provider_transaction_id', 'provider_reference', 'payment_intent__idempotency_key']
     readonly_fields = ['created_at', 'updated_at', 'synced', 'id', 'celery_task_id']
-    inlines = [TransactionStateLogInline]
+    inlines = [
+        TransactionStateLogInline,
+        WebhookOutboxInline
+    ]
     date_hierarchy = 'created_at'
     ordering = ['-created_at']
 
@@ -538,7 +640,7 @@ class TransactionAdmin(admin.ModelAdmin):
         ('Payloads', {'fields': ('request_payload', 'response_payload'), 'classes': ('wide', 'collapse')}),
         ('Failure', {'fields': ('failure_reason', 'failure_code'), 'classes': ('collapse',)}),
         ('Timing', {'fields': ('provider_callback_received_at', 'reconciliation_due_at', 'reconciliation_attempts')}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id', 'celery_task_id'), 'classes': ('collapse',)}),
+        ('Audit', {'fields': ('created_at', 'updated_at', 'synced', 'id', 'celery_task_id'), 'classes': ('collapse',)}),
     )
 
     @admin.display(description='Intent')
@@ -581,7 +683,7 @@ class TransactionStateLogAdmin(admin.ModelAdmin):
 
     fieldsets = (
         (None, {'fields': ('transaction', 'from_status', 'to_status', 'reason', 'actor', 'metadata')}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
+        ('Audit', {'fields': ('created_at', 'updated_at', 'synced', 'id'), 'classes': ('collapse',)}),
     )
 
     def has_add_permission(self, request):
@@ -614,7 +716,7 @@ class LedgerAccountAdmin(admin.ModelAdmin):
 
     fieldsets = (
         (None, {'fields': ('code', 'name', 'account_type', 'currency', 'system', 'is_active')}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
+        ('Audit', {'fields': ('created_at', 'updated_at', 'synced', 'id'), 'classes': ('collapse',)}),
     )
 
     @admin.display(description='Active')
@@ -644,7 +746,7 @@ class LedgerPostingAdmin(admin.ModelAdmin):
 
     fieldsets = (
         (None, {'fields': ('transaction', 'account', 'entry_type', 'amount', 'currency', 'description', 'posting_ref')}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
+        ('Audit', {'fields': ('created_at', 'updated_at', 'synced', 'id'), 'classes': ('collapse',)}),
     )
 
     @admin.display(description='Transaction')
@@ -692,7 +794,7 @@ class WebhookOutboxAdmin(admin.ModelAdmin):
         ('Target', {'fields': ('system', 'destination_url')}),
         ('Event', {'fields': ('payment_intent', 'transaction', 'event_type', 'payload')}),
         ('Delivery', {'fields': ('status', 'attempt_count', 'max_attempts', 'next_attempt_at', 'last_attempted_at')}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
+        ('Audit', {'fields': ('created_at', 'updated_at', 'synced', 'id'), 'classes': ('collapse',)}),
     )
 
     @admin.display(description='Status')
@@ -763,7 +865,7 @@ class WebhookDeliveryLogAdmin(admin.ModelAdmin):
         ('Request', {'fields': ('request_headers', 'request_payload'), 'classes': ('wide', 'collapse')}),
         ('Response', {'fields': ('response_status_code', 'response_body', 'response_headers', 'duration_ms'), 'classes': ('wide',)}),
         ('Error', {'fields': ('error_message',), 'classes': ('collapse',)}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
+        ('Audit', {'fields': ('created_at', 'updated_at', 'synced', 'id'), 'classes': ('collapse',)}),
     )
 
     def has_add_permission(self, request):
@@ -817,33 +919,53 @@ class WebhookDeliveryLogAdmin(admin.ModelAdmin):
 class ProviderCallbackLogAdmin(admin.ModelAdmin):
     list_display = [
         'provider',
-        'parsed_status',
-        'processed_colored',
         'transaction',
+        'status_colored',
+        'parsed_status',
         'created_at_display',
     ]
-    list_filter = ['provider', 'processed', 'created_at']
-    search_fields = ['raw_payload', 'processing_error']
-    readonly_fields = ['created_at', 'updated_at', 'synced', 'id']
+    list_filter = ['status', 'provider', 'created_at']
+    search_fields = ['raw_payload', 'processing_error', 'provider_reference']
+    readonly_fields = ['created_at', 'updated_at', 'id']
     date_hierarchy = 'created_at'
+    ordering = ['-created_at']
 
     def has_add_permission(self, request):
         return False
 
     fieldsets = (
-        ('Provider', {'fields': ('provider', 'transaction')}),
-        ('Payload', {'fields': ('raw_headers', 'raw_payload'), 'classes': ('wide',)}),
-        ('Result', {'fields': ('parsed_status', 'processed', 'processing_error')}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
+        ('Provider & Transaction', {
+            'fields': ('provider', 'transaction'),
+        }),
+        ('Payload', {
+            'fields': ('raw_headers', 'raw_payload'),
+            'classes': ('wide',),
+        }),
+        ('Processing', {
+            'fields': ('status', 'parsed_status', 'processing_error'),
+        }),
+        ('Audit', {
+            'fields': ('created_at', 'updated_at', 'id'),
+            'classes': ('collapse',),
+        }),
     )
 
-    @admin.display(description='Processed')
-    def processed_colored(self, obj):
-        if obj.processed:
-            return format_html('<span style="color:#28a745">Yes</span>')
-        if obj.processing_error:
-            return format_html('<span style="color:#dc3545">Error</span>')
-        return format_html('<span style="color:#fd7e14">No</span>')
+    @admin.display(description='Status', ordering='status')
+    def status_colored(self, obj):
+        colors = {
+            ProviderCallbackLog.Status.RECEIVED:   '#6c757d',
+            ProviderCallbackLog.Status.PROCESSING: '#007bff',
+            ProviderCallbackLog.Status.PROCESSED:  '#28a745',
+            ProviderCallbackLog.Status.FAILED:     '#dc3545',
+            ProviderCallbackLog.Status.REJECTED:   '#dc3545',
+            ProviderCallbackLog.Status.IGNORED:    '#fd7e14',
+        }
+        color = colors.get(obj.status, '#6c757d')
+        return format_html(
+            '<span style="color:{}; font-weight:bold;">{}</span>',
+            color,
+            obj.get_status_display()
+        )
 
     @admin.display(description='Created', ordering='created_at')
     def created_at_display(self, obj):
@@ -873,7 +995,7 @@ class ReconciliationRecordAdmin(admin.ModelAdmin):
         ('Status', {'fields': ('status', 'provider_reported_status')}),
         ('Resolution', {'fields': ('discrepancy_notes', 'resolved_by', 'resolved_at')}),
         ('Attempts', {'fields': ('attempts', 'last_attempted_at')}),
-        ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
+        ('Audit', {'fields': ('created_at', 'updated_at', 'synced', 'id'), 'classes': ('collapse',)}),
     )
 
     @admin.display(description='Status')
