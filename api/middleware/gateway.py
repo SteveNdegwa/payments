@@ -42,7 +42,7 @@ class GatewayControlMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        api_key_validation_required = False
+        api_key_validation_required = True
 
         if request.path.startswith("/api/"):
             request._dont_enforce_csrf_checks = True

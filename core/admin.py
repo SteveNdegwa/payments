@@ -1,27 +1,20 @@
-from django.contrib import admin
+import hashlib
+
+from django.contrib import admin, messages
 from django.utils.html import format_html
 from django.utils import timezone
 from django.urls import reverse
-from django.utils.formats import date_format
 
 from .models import (
     System, PaymentMethodType, Provider, ProviderAccount,
     ChargeableEvent, PaymentMethodToken, PaymentIntent,
     Transaction, TransactionStateLog, LedgerAccount, LedgerPosting,
     WebhookOutbox, WebhookDeliveryLog, ProviderCallbackLog,
-    ReconciliationRecord
+    ReconciliationRecord, generate_api_key
 )
 
 
 def format_datetime_admin(dt):
-    """
-    Precise-enough formatting for financial/transaction context:
-    - today / yesterday → always with time
-    - up to 3 days → days ago + time
-    - up to 2 weeks → weekday + time
-    - this month → month day + time
-    - older → full date or date+time depending on age
-    """
     if dt is None:
         return "—"
 
@@ -36,17 +29,13 @@ def format_datetime_admin(dt):
     if delta.days <= 3:
         return f"{delta.days}d ago {time_str}"
     if delta.days <= 14:
-        return dt.strftime("%a %H:%M")          # e.g. Fri 14:22
-    if delta.days <= 62:                        # ~2 months
-        return dt.strftime("%b %d %H:%M")       # e.g. Mar 15 09:12
+        return dt.strftime("%a %H:%M")
+    if delta.days <= 62:
+        return dt.strftime("%b %d %H:%M")
     if now.year == dt.year:
         return dt.strftime("%b %d")
     return dt.strftime("%Y-%m-%d")
 
-
-# ────────────────────────────────────────────────
-# Inlines
-# ────────────────────────────────────────────────
 
 class TransactionInline(admin.TabularInline):
     model = Transaction
@@ -215,10 +204,6 @@ class WebhookDeliveryLogInline(admin.TabularInline):
         return format_datetime_admin(obj.created_at)
 
 
-# ────────────────────────────────────────────────
-# Model Admin classes
-# ────────────────────────────────────────────────
-
 @admin.register(System)
 class SystemAdmin(admin.ModelAdmin):
     list_display = [
@@ -237,15 +222,90 @@ class SystemAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ('Identity', {'fields': ('name', 'slug', 'is_active')}),
-        ('Security', {'fields': ('hashed_api_key', 'allowed_ips'), 'classes': ('wide',)}),
+        ('Security', {
+            'fields': ('hashed_api_key', 'allowed_ips'),
+            'classes': ('wide',),
+            'description': (
+                "The API key is generated automatically when creating a new System. "
+                "It will be displayed **only once** in the success message below the form after saving. "
+                "You can reset it later using the \"Reset API Key\" action in the actions dropdown."
+            )
+        }),
         ('Limits', {'fields': ('rate_limit_per_minute', 'max_transaction_amount', 'daily_volume_limit', 'allowed_currencies')}),
         ('Webhook', {'fields': ('webhook_url', 'webhook_secret')}),
         ('Audit', {'fields': (('created_at', 'updated_at'), 'synced', 'id'), 'classes': ('collapse',)}),
     )
 
+    actions = ['reset_api_key']
+
+    def save_model(self, request, obj, form, change):
+        is_new = not change
+
+        if is_new:
+            plain_key = generate_api_key()
+            obj.hashed_api_key = hashlib.sha256(plain_key.encode("utf-8")).hexdigest()
+
+            messages.success(
+                request,
+                format_html(
+                    '<div style="background:#d4edda; color:#155724; padding:12px; border:1px solid #c3e6cb; '
+                    'border-radius:4px; margin:10px 0;">'
+                    '<strong>API Key generated – copy it now!</strong><br>'
+                    'This key will <strong>never be shown again</strong>.<br><br>'
+                    '<code style="font-size:1.4em; background:#fff; padding:8px 12px; border:1px solid #ced4da; '
+                    'border-radius:4px; font-family:monospace;">'
+                    '{}</code><br><br>'
+                    '<small>Store it securely immediately. '
+                    'You can generate a new one later using the "Reset API Key" action.</small>'
+                    '</div>',
+                    plain_key
+                ),
+                extra_tags='safe html'
+            )
+
+        super().save_model(request, obj, form, change)
+
+    def reset_api_key(self, request, queryset):
+        if queryset.count() != 1:
+            self.message_user(
+                request,
+                "Please select exactly one System to reset the API key.",
+                level=messages.ERROR
+            )
+            return
+
+        obj = queryset.first()
+
+        plain_key = generate_api_key()
+        obj.hashed_api_key = hashlib.sha256(plain_key.encode("utf-8")).hexdigest()
+        obj.save(update_fields=['hashed_api_key'])
+
+        self.message_user(
+            request,
+            format_html(
+                '<div style="background:#d4edda; color:#155724; padding:12px; border:1px solid #c3e6cb; '
+                'border-radius:4px; margin:10px 0;">'
+                '<strong>API key reset successfully for {}</strong><br><br>'
+                'New API Key – <strong>copy it now!</strong> It will never be shown again.<br><br>'
+                '<code style="font-size:1.4em; background:#fff; padding:8px 12px; border:1px solid #ced4da; '
+                'border-radius:4px; font-family:monospace;">'
+                '{}</code><br><br>'
+                '<small>The previous key is now invalid. Update the client immediately.</small>'
+                '</div>',
+                obj.name,
+                plain_key
+            ),
+            level=messages.SUCCESS,
+            extra_tags='safe html'
+        )
+
+    reset_api_key.short_description = "Reset API Key (shows new key once)"
+
     @admin.display(description='Active')
     def is_active_colored(self, obj):
-        return format_html('<span style="color:#28a745">Yes</span>' if obj.is_active else '<span style="color:#dc3545">No</span>')
+        return format_html(
+            '<span style="color:#28a745">Yes</span>' if obj.is_active else '<span style="color:#dc3545">No</span>'
+        )
 
     @admin.display(description='Currencies')
     def allowed_currencies_short(self, obj):
@@ -291,6 +351,7 @@ class ProviderAdmin(admin.ModelAdmin):
     list_filter = ['is_active', 'is_async', 'payment_method_type', 'supports_refund', 'supports_3ds']
     search_fields = ['name', 'slug', 'class_name']
     readonly_fields = ['created_at', 'updated_at', 'synced', 'id']
+    ordering = ['name']
 
     fieldsets = (
         ('Identity', {'fields': ('name', 'slug', 'class_name', 'payment_method_type')}),
@@ -323,6 +384,7 @@ class ProviderAccountAdmin(admin.ModelAdmin):
     list_filter = ['environment', 'is_default', 'is_active', 'provider']
     search_fields = ['name', 'provider__name']
     readonly_fields = ['created_at', 'updated_at', 'synced', 'id']
+    ordering = ['-is_default', 'provider__name', 'name']
 
     fieldsets = (
         (None, {'fields': ('provider', 'name', 'environment', 'is_default', 'is_active')}),
@@ -350,6 +412,7 @@ class ChargeableEventAdmin(admin.ModelAdmin):
     list_filter = ['system', 'provider', 'flow', 'currency', 'is_active']
     search_fields = ['name', 'slug', 'system__slug', 'provider__name']
     readonly_fields = ['created_at', 'updated_at', 'synced', 'id']
+    ordering = ['-created_at']
 
     fieldsets = (
         ('Identity', {'fields': ('system', 'name', 'slug', 'description')}),
@@ -370,6 +433,7 @@ class PaymentMethodTokenAdmin(admin.ModelAdmin):
     list_filter = ['system', 'provider', 'token_type', 'is_active']
     search_fields = ['masked_identifier', 'customer_ref', 'system__slug']
     readonly_fields = ['created_at', 'updated_at', 'synced', 'id']
+    ordering = ['-created_at']
 
     fieldsets = (
         ('Token', {'fields': ('system', 'provider', 'token_type', 'provider_token')}),
@@ -408,6 +472,7 @@ class PaymentIntentAdmin(admin.ModelAdmin):
     ]
     inlines = [TransactionInline]
     date_hierarchy = 'created_at'
+    ordering = ['-created_at']
 
     fieldsets = (
         ('Core', {'fields': (('system', 'source_system'), 'chargeable_event', 'payment_method_token', ('amount', 'currency'))}),
@@ -464,6 +529,7 @@ class TransactionAdmin(admin.ModelAdmin):
     readonly_fields = ['created_at', 'updated_at', 'synced', 'id', 'celery_task_id']
     inlines = [TransactionStateLogInline]
     date_hierarchy = 'created_at'
+    ordering = ['-created_at']
 
     fieldsets = (
         ('Core', {'fields': ('payment_intent', 'transaction_type', 'status')}),
@@ -511,6 +577,7 @@ class TransactionStateLogAdmin(admin.ModelAdmin):
     search_fields = ['transaction__id', 'reason', 'actor']
     readonly_fields = ['created_at', 'updated_at', 'synced', 'id']
     date_hierarchy = 'created_at'
+    ordering = ['-created_at']
 
     fieldsets = (
         (None, {'fields': ('transaction', 'from_status', 'to_status', 'reason', 'actor', 'metadata')}),
@@ -543,6 +610,7 @@ class LedgerAccountAdmin(admin.ModelAdmin):
     ]
     search_fields = ['code', 'name']
     readonly_fields = ['created_at', 'updated_at', 'synced', 'id']
+    ordering = ['code']
 
     fieldsets = (
         (None, {'fields': ('code', 'name', 'account_type', 'currency', 'system', 'is_active')}),
@@ -569,6 +637,7 @@ class LedgerPostingAdmin(admin.ModelAdmin):
     search_fields = ['transaction__id', 'account__code', 'description']
     readonly_fields = ['created_at', 'updated_at', 'synced', 'id']
     date_hierarchy = 'created_at'
+    ordering = ['-created_at']
 
     def has_add_permission(self, request):
         return False
@@ -617,6 +686,7 @@ class WebhookOutboxAdmin(admin.ModelAdmin):
     readonly_fields = ['created_at', 'updated_at', 'synced', 'id']
     inlines = [WebhookDeliveryLogInline]
     date_hierarchy = 'next_attempt_at'
+    ordering = ['-next_attempt_at']
 
     fieldsets = (
         ('Target', {'fields': ('system', 'destination_url')}),
@@ -793,6 +863,7 @@ class ReconciliationRecordAdmin(admin.ModelAdmin):
     search_fields = ['transaction__id', 'discrepancy_notes']
     readonly_fields = ['created_at', 'updated_at', 'synced', 'id']
     date_hierarchy = 'created_at'
+    ordering = ['-created_at']
 
     def has_add_permission(self, request):
         return False
