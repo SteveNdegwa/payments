@@ -5,12 +5,12 @@ from decimal import Decimal
 from typing import Optional
 from urllib.parse import urljoin
 
+from django.conf import settings
 from django.db import transaction as db_transaction
 from django.utils import timezone
 
 from core.models import (
     PaymentIntent,
-    ProviderAccount,
     ReconciliationRecord,
     Transaction,
     TransactionStateLog,
@@ -99,7 +99,8 @@ class TransactionExecutor:
         return txn
 
     def _inject_callback_url(self, txn: Transaction) -> None:
-        base_url = os.getenv("BASE_URL")
+        base_url = settings.BASE_URL
+        # base_url = os.getenv("BASE_URL")
         if not base_url:
             raise ValueError("BASE_URL environment variable is not configured.")
         base_url = base_url.strip().rstrip("/")

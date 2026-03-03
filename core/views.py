@@ -98,3 +98,7 @@ def provider_callback(
         raw_payload=request.data,
     )
     return ResponseProvider.success(message="Received")
+
+def test(request):
+    print(request.data)
+    return ResponseProvider.success(message="test")

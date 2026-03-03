@@ -42,7 +42,7 @@ class GatewayControlMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        api_key_validation_required = True
+        api_key_validation_required = False
 
         if request.path.startswith("/api/"):
             request._dont_enforce_csrf_checks = True
@@ -158,6 +158,7 @@ class GatewayControlMiddleware:
 
     @staticmethod
     def _set_request_metadata(request):
+        request.api_client = None
         request.user = getattr(request, 'user', None)
         request.is_authenticated = True if isinstance(request.user, User) else False
         request.client_ip = get_client_ip(request)

@@ -34,11 +34,6 @@ class BaseProvider(ABC):
     def __init__(self, credentials: dict, config: dict | None = None):
         self.credentials = credentials
         self.config = config or {}
-        self._validate_config()
-
-    @abstractmethod
-    def _validate_config(self) -> None:
-        raise NotImplementedError
 
     # Core payment flows
     def charge(self, *, amount: Decimal, currency: str, payload: dict) -> ProviderResult:
@@ -63,7 +58,7 @@ class BaseProvider(ABC):
 
 
     # Reconciliation
-    def query_status(self, *, provider_transaction_id: str) -> ProviderResult:
+    def query_status(self, *, provider_transaction_id: str, payload: dict) -> ProviderResult:
         """Poll provider for the current status of a transaction."""
         raise NotImplementedError
 

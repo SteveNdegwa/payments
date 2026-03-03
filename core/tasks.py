@@ -2,21 +2,23 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import time
 from datetime import timedelta
 from decimal import Decimal
+from urllib.parse import urljoin
 
 import requests
 from celery import shared_task
-from django.db import transaction as db_transaction
+from django.conf import settings
 from django.utils import timezone
 
 from core.models import (
     PaymentIntent,
     ReconciliationRecord,
     Transaction,
-    TransactionStateLog,
-    WebhookOutbox, WebhookDeliveryLog,
+    WebhookOutbox,
+    WebhookDeliveryLog,
 )
 
 logger = logging.getLogger(__name__)
@@ -160,8 +162,22 @@ def task_reconcile_transaction(self, transaction_id: str):
         config=pa.extra_config,
     )
 
+    # base_url = os.getenv("BASE_URL")
+    base_url = settings.BASE_URL
+    if not base_url:
+        raise ValueError("BASE_URL environment variable is not configured.")
+
+    base_url = base_url.strip().rstrip("/")
+    callback_path = f"/core/payments/callbacks/{txn.provider.slug}/{txn.id}/"
+    callback_url = urljoin(f"{base_url}/", callback_path.lstrip("/"))
+
+    payload = {
+        "callback_url": callback_url
+    }
+
     result = provider_instance.query_status(
-        provider_transaction_id=txn.provider_transaction_id
+        provider_transaction_id=txn.provider_transaction_id,
+        payload=payload
     )
 
     rec.attempts += 1
