@@ -1,14 +1,24 @@
 replicaCount: 1
 
 image:
-  repository: registry.gitlab.com/spin_mobile/spin-payments
+  repository: registry.gitlab.com/spin_mobile/payments
   pullPolicy: IfNotPresent
   tag: latest
 
 imagePullSecrets:
   - name: gitlab-registry-credentials
 
-commands: ["gunicorn", "--bind", "0.0.0.0:8000", "--timeout", "300", "spin_payments.wsgi:application", "-w", "2"]
+commands:
+  [
+    "gunicorn",
+    "--bind",
+    "0.0.0.0:8000",
+    "--timeout",
+    "300",
+    "spin_payments.wsgi:application",
+    "-w",
+    "2",
+  ]
 
 nameOverride: ""
 fullnameOverride: ""
@@ -54,7 +64,7 @@ volumeMounts:
 volumes:
   - name: nginx-conf
     configMap:
-      name: spin-payments-nginx-config
+      name: payments-nginx-config
   - name: staticfiles
     emptyDir: {}
 
@@ -104,7 +114,7 @@ service:
   targetPort: http
 
 configMaps:
-  - name: spin-payments-nginx-config
+  - name: payments-nginx-config
     data:
       backend.conf: |-
         upstream app_server {
@@ -158,7 +168,7 @@ ingress:
         - path: /
           pathType: ImplementationSpecific
   tls:
-    - secretName: stage-spin-payments-tls
+    - secretName: stage-payments-tls
       hosts:
         - stage-payments.spinmobile.co
 
@@ -191,7 +201,7 @@ initContainer:
   enabled: true
   name: collectstatic
   image:
-    repository: registry.gitlab.com/spin_mobile/spin-payments
+    repository: registry.gitlab.com/spin_mobile/payments
     tag: latest
   commands: ["python", "manage.py", "collectstatic", "--no-input"]
   volumeMounts:
