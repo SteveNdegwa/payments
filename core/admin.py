@@ -2,6 +2,7 @@ import hashlib
 
 from django.contrib import admin, messages
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 from django.utils import timezone
 from django.urls import reverse
 
@@ -300,7 +301,7 @@ class SystemAdmin(admin.ModelAdmin):
         ('Security', {
             'fields': ('hashed_api_key', 'allowed_ips'),
             'classes': ('wide',),
-            'description': format_html(
+            'description': mark_safe(
                 'API key is auto-generated on creation and shown <strong>only once</strong> after save.'
             )
         }),
@@ -394,7 +395,7 @@ class SystemAdmin(admin.ModelAdmin):
 
     @admin.display(description='Active')
     def is_active_colored(self, obj):
-        return format_html(
+        return mark_safe(
             '<span style="color:#28a745">Yes</span>' if obj.is_active else '<span style="color:#dc3545">No</span>'
         )
 
@@ -454,7 +455,7 @@ class ProviderAdmin(admin.ModelAdmin):
 
     @admin.display(description='Active')
     def is_active_colored(self, obj):
-        return format_html('<span style="color:#28a745">Yes</span>' if obj.is_active else '<span style="color:#dc3545">No</span>')
+        return mark_safe('<span style="color:#28a745">Yes</span>' if obj.is_active else '<span style="color:#dc3545">No</span>')
 
     @admin.display(description='Async')
     def is_async_colored(self, obj):

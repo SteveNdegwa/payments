@@ -3,7 +3,7 @@ import re
 import secrets
 from django.db import models
 from django.utils import timezone
-from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 
 from base.models import BaseModel
 
@@ -188,7 +188,7 @@ class ChargeableEvent(BaseModel):
         max_length=20,
         choices=CallbackDestination.choices,
         default=CallbackDestination.SYSTEM,
-        help_text=format_html(
+        help_text=mark_safe(
             "<b>Determines which system's webhook URL receives payment webhooks.</b><br><br>"
             "• <b>SYSTEM</b>: Always send to this ChargeableEvent.system.webhook_url.<br>"
             "• <b>SOURCE_SYSTEM</b>: Send to payment_intent.source_system.webhook_url "
