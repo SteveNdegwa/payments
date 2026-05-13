@@ -1,0 +1,223 @@
+replicaCount: 1
+
+image:
+  repository: registry.gitlab.com/spin_mobile/payments
+  pullPolicy: IfNotPresent
+  tag: latest
+
+imagePullSecrets:
+  - name: gitlab-registry-credentials
+
+commands:
+  [
+    "gunicorn",
+    "--bind",
+    "0.0.0.0:8000",
+    "--timeout",
+    "300",
+    "spin_payments.wsgi:application",
+    "-w",
+    "2",
+  ]
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+livenessProbe:
+  path: /healthz
+  port: 8000
+  initialDelaySeconds: 15
+  periodSeconds: 60
+  timeoutSeconds: 30
+  httpHeaders:
+    - name: Host
+      value: stage-payments.spinmobile.co
+
+readinessProbe:
+  path: /healthz
+  port: 8000
+  initialDelaySeconds: 15
+  periodSeconds: 60
+  timeoutSeconds: 30
+  httpHeaders:
+    - name: Host
+      value: stage-payments.spinmobile.co
+
+volumeMounts:
+  - name: staticfiles
+    mountPath: /var/www/spin_payments
+  - name: nginx-conf
+    mountPath: /etc/nginx/conf.d
+    readOnly: true
+
+volumes:
+  - name: nginx-conf
+    configMap:
+      name: payments-nginx-config
+  - name: staticfiles
+    emptyDir: {}
+
+sidecarimage:
+  name: nginx
+  repository: nginx
+  tag: stable
+  pullPolicy: IfNotPresent
+  ports:
+    - name: http
+      containerPort: 80
+      protocol: TCP
+  mounts:
+    - name: nginx-conf
+      mountPath: /etc/nginx/conf.d
+      readOnly: true
+    - name: staticfiles
+      mountPath: /var/www/spin_payments
+  livenessProbe:
+    path: /nghealthz
+    port: 80
+    initialDelaySeconds: 15
+    periodSeconds: 30
+    timeoutSeconds: 60
+  readinessProbe:
+    path: /nghealthz
+    port: 80
+    initialDelaySeconds: 15
+    periodSeconds: 30
+    timeoutSeconds: 60
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+port:
+  port: 8000
+  name: gunicorn
+  protocol: TCP
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: http
+
+configMaps:
+  - name: payments-nginx-config
+    data:
+      backend.conf: |-
+        upstream app_server {
+            server 127.0.0.1:8000 fail_timeout=0;
+        }
+        server {
+            listen 80;
+            root /var/www/spin_payments;
+            client_max_body_size 25M;
+
+            access_log stdout;
+            error_log  stderr;
+
+            location / {
+                location /static {
+                    add_header Access-Control-Allow-Origin *;
+                    add_header Access-Control-Max-Age 3600;
+                    add_header Access-Control-Expose-Headers Content-Length;
+                    add_header Access-Control-Allow-Headers Range;
+                    if ($request_method = OPTIONS) {
+                        return 204;
+                    }
+                    try_files /$uri @django;
+                }
+                location /nghealthz {
+                    default_type application/json;
+                    return 200 '{"success": true, "message": "healthy"}';
+                }
+                try_files $uri @django;
+            }
+            location @django {
+                proxy_connect_timeout 300;
+                proxy_send_timeout 300;
+                proxy_read_timeout 300;
+                send_timeout 300;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header Host $http_host;
+                proxy_redirect off;
+                proxy_pass http://app_server;
+            }
+        }
+
+ingress:
+  enabled: true
+  className: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod-issuer
+  hosts:
+    - host: stage-payments.spinmobile.co
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls:
+    - secretName: stage-payments-tls
+      hosts:
+        - stage-payments.spinmobile.co
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 750
+  targetMemoryUtilizationPercentage: 750
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+initContainer:
+  enabled: true
+  name: collectstatic
+  image:
+    repository: registry.gitlab.com/spin_mobile/payments
+    tag: latest
+  commands: ["python", "manage.py", "collectstatic", "--no-input"]
+  volumeMounts:
+    - name: staticfiles
+      mountPath: /var/www/spin_payments
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+env:
+  ENV: stage
+  DEBUG: "true"
+  APP_PATH: /var/www/spin_payments
+  ALLOWED_HOSTS: "stage-payments.spinmobile.co"
+  SECRET_KEY: "django-secure-replace-me-stage"

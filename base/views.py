@@ -1,3 +1,5 @@
-from django.shortcuts import render
+from django.http import JsonResponse
 
-# Create your views here.
+
+def healthz(request):
+    return JsonResponse({"success": True, "message": "healthy"})

@@ -1,0 +1,47 @@
+services:
+  app:
+    build: .
+    command: gunicorn --bind 0.0.0.0:8000 --timeout 300 spin_payments.wsgi:application -w 2
+    working_dir: /usr/src/app
+    ports:
+      - 8000:8000
+    environment:
+      - ENV=local
+      - DEBUG=1
+      - ALLOWED_HOSTS=*
+      - SECRET_KEY=django-insecure-cogu1s%!x&tm+it74)6inzov0bg82lympp^6*kc0@+2rz8^v28
+      - APP_PATH=/var/www/spin_payments
+      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
+    depends_on:
+      - rabbitmq
+    volumes:
+      - .:/usr/src/app
+    networks:
+      - spin_payments_net
+
+  worker:
+    build: .
+    command: celery -A spin_payments worker --loglevel=info
+    working_dir: /usr/src/app
+    environment:
+      - ENV=local
+      - DEBUG=1
+      - SECRET_KEY=django-insecure-cogu1s%!x&tm+it74)6inzov0bg82lympp^6*kc0@+2rz8^v28
+      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
+    depends_on:
+      - rabbitmq
+    volumes:
+      - .:/usr/src/app
+    networks:
+      - spin_payments_net
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - 5672:5672
+      - 15672:15672
+    networks:
+      - spin_payments_net
+
+networks:
+  spin_payments_net:
