@@ -15,7 +15,7 @@ _STATUS_MAP = {
     "requires_confirmation": ProviderResultStatus.REQUIRES_ACTION,
     "requires_action": ProviderResultStatus.REQUIRES_ACTION,
     "canceled": ProviderResultStatus.FAILED,
-    "requires_capture": ProviderResultStatus.SUCCESS
+    "requires_capture": ProviderResultStatus.SUCCESS,
 }
 
 
@@ -69,7 +69,6 @@ def _build_result(intent: dict) -> ProviderResult:
 
 @register_provider("core.providers.stripe_provider.StripeProvider")
 class StripeProvider(BaseProvider):
-
     def __init__(self, credentials: dict, config: dict | None = None):
         super().__init__(credentials, config)
         self._client = stripe.StripeClient(api_key=credentials["secret_key"])
@@ -127,7 +126,9 @@ class StripeProvider(BaseProvider):
                 raw_response=exc.json_body or {},
             )
 
-    def capture(self, *, provider_transaction_id: str, amount: Decimal, payload: dict) -> ProviderResult:
+    def capture(
+        self, *, provider_transaction_id: str, amount: Decimal, payload: dict
+    ) -> ProviderResult:
         try:
             currency = payload.get("currency", "usd")
             intent = self._client.payment_intents.capture(
@@ -157,7 +158,9 @@ class StripeProvider(BaseProvider):
                 raw_response=exc.json_body or {},
             )
 
-    def refund(self, *, provider_transaction_id: str, amount: Decimal, payload: dict) -> ProviderResult:
+    def refund(
+        self, *, provider_transaction_id: str, amount: Decimal, payload: dict
+    ) -> ProviderResult:
         try:
             currency = payload.get("currency", "usd")
             refund = self._client.refunds.create(

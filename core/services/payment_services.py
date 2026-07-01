@@ -2,7 +2,6 @@ import logging
 import uuid
 from datetime import timedelta
 from decimal import Decimal
-from typing import Optional
 
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction as db_transaction
@@ -11,11 +10,15 @@ from django.utils import timezone
 from core.models import (
     ChargeableEvent,
     PaymentIntent,
+    PaymentMethodToken,
+    Provider,
+    ProviderCallbackLog,
+    ReconciliationRecord,
     System,
     Transaction,
-    WebhookOutbox, Provider, ProviderCallbackLog, ReconciliationRecord, TransactionStateLog, PaymentMethodToken,
+    TransactionStateLog,
+    WebhookOutbox,
 )
-from core.providers.base_provider import ProviderResultStatus
 from core.services.executor import TransactionExecutor
 from core.services.registry import get_provider_instance
 
@@ -29,17 +32,17 @@ class PaymentError(Exception):
 class PaymentServices:
     @classmethod
     def initialize_payment(
-            cls,
-            *,
-            source_system: System,
-            system_slug: str,
-            chargeable_event_slug: str,
-            amount: Optional[float] = None,
-            currency: Optional[str] = None,
-            # Provider-specific data: phone number, return_url, etc.
-            payment_payload: Optional[dict] = None,
-            payment_method_token_id: Optional[str] = None,
-            idempotency_key: Optional[str] = None,
+        cls,
+        *,
+        source_system: System,
+        system_slug: str,
+        chargeable_event_slug: str,
+        amount: float | None = None,
+        currency: str | None = None,
+        # Provider-specific data: phone number, return_url, etc.
+        payment_payload: dict | None = None,
+        payment_method_token_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> PaymentIntent:
         idempotency_key = idempotency_key or str(uuid.uuid4())
 
@@ -67,14 +70,12 @@ class PaymentServices:
         if payment_method_token_id:
             try:
                 token = PaymentMethodToken.objects.get(
-                    id=payment_method_token_id,
-                    system=system,
-                    is_active=True
+                    id=payment_method_token_id, system=system, is_active=True
                 )
-            except PaymentMethodToken.DoesNotExist:
+            except PaymentMethodToken.DoesNotExist as err:
                 raise ObjectDoesNotExist(
                     f"Payment method token '{payment_method_token_id}' not found."
-                )
+                ) from err
 
         with db_transaction.atomic():
             pi, created = PaymentIntent.objects.get_or_create(
@@ -104,22 +105,18 @@ class PaymentServices:
         from core.tasks import task_authorize, task_charge
 
         if pi.chargeable_event.flow == ChargeableEvent.Flow.CHARGE:
-            task_charge.apply_async(
-                kwargs={"payment_intent_id": str(pi.id)}
-            )
+            task_charge.apply_async(kwargs={"payment_intent_id": str(pi.id)})
 
         elif pi.chargeable_event.flow == ChargeableEvent.Flow.AUTHORIZE_CAPTURE:
-            task_authorize.apply_async(
-                kwargs={"payment_intent_id": str(pi.id)}
-            )
+            task_authorize.apply_async(kwargs={"payment_intent_id": str(pi.id)})
 
     @classmethod
     def queue_capture(
         cls,
         *,
         payment_intent_id: str,
-        amount: Optional[Decimal] = None,
-        payload: Optional[dict] = None,
+        amount: Decimal | None = None,
+        payload: dict | None = None,
     ) -> str:
         from core.tasks import task_capture
 
@@ -154,7 +151,7 @@ class PaymentServices:
         cls,
         *,
         payment_intent_id: str,
-        payload: Optional[dict] = None,
+        payload: dict | None = None,
     ) -> str:
         from core.tasks import task_void
 
@@ -173,8 +170,8 @@ class PaymentServices:
         cls,
         *,
         payment_intent_id: str,
-        amount: Optional[Decimal] = None,
-        payload: Optional[dict] = None,
+        amount: Decimal | None = None,
+        payload: dict | None = None,
     ) -> str:
         from core.tasks import task_refund
 
@@ -254,10 +251,7 @@ class PaymentServices:
         pi.refresh_from_db()
 
         # Auto-capture if configured and authorization succeeded
-        if (
-            pi.status == PaymentIntent.Status.AUTHORIZED
-            and pi.chargeable_event.auto_capture
-        ):
+        if pi.status == PaymentIntent.Status.AUTHORIZED and pi.chargeable_event.auto_capture:
             cls.schedule_auto_capture(pi)
 
         return txn
@@ -267,7 +261,7 @@ class PaymentServices:
         cls,
         *,
         payment_intent_id: str,
-        amount: Optional[Decimal],
+        amount: Decimal | None,
         extra_payload: dict,
         actor: str,
     ) -> Transaction:
@@ -279,8 +273,7 @@ class PaymentServices:
             ],
         )
         auth_txn = cls._get_last_successful_txn(
-            pi, Transaction.Type.AUTHORIZATION,
-            "No successful authorization found to capture."
+            pi, Transaction.Type.AUTHORIZATION, "No successful authorization found to capture."
         )
         capture_amount = amount or pi.amount_remaining
         txn = TransactionExecutor(
@@ -306,8 +299,7 @@ class PaymentServices:
             payment_intent_id, allowed_statuses=[PaymentIntent.Status.AUTHORIZED]
         )
         auth_txn = cls._get_last_successful_txn(
-            pi, Transaction.Type.AUTHORIZATION,
-            "No successful authorization found to void."
+            pi, Transaction.Type.AUTHORIZATION, "No successful authorization found to void."
         )
         txn = TransactionExecutor(
             payment_intent=pi,
@@ -325,7 +317,7 @@ class PaymentServices:
         cls,
         *,
         payment_intent_id: str,
-        amount: Optional[Decimal],
+        amount: Decimal | None,
         extra_payload: dict,
         actor: str,
     ) -> Transaction:
@@ -371,12 +363,12 @@ class PaymentServices:
 
     @classmethod
     def receive_provider_callback(
-            cls,
-            *,
-            provider_slug: str,
-            transaction_id: str,
-            headers: dict,
-            raw_payload: dict,
+        cls,
+        *,
+        provider_slug: str,
+        transaction_id: str,
+        headers: dict,
+        raw_payload: dict,
     ) -> None:
         from core.tasks import task_process_provider_callback
 
@@ -442,13 +434,17 @@ class PaymentServices:
 
     @classmethod
     def apply_provider_result(
-            cls,
-            *,
-            txn: Transaction,
-            result,
-            actor: str,
+        cls,
+        *,
+        txn: Transaction,
+        result,
+        actor: str,
     ) -> None:
-        from core.services.executor import ProviderResultStatus, txn_status_from_result, intent_status_after_txn
+        from core.services.executor import (
+            ProviderResultStatus,
+            intent_status_after_txn,
+            txn_status_from_result,
+        )
 
         if result.status in (ProviderResultStatus.PENDING, ProviderResultStatus.UNKNOWN):
             raise ValueError("apply_provider_result called with inconclusive result.")
@@ -483,9 +479,7 @@ class PaymentServices:
                 elif t == Transaction.Type.AUTHORIZATION:
                     pi.amount_authorized = (pi.amount_authorized or 0) + txn.amount
 
-            new_intent_status = intent_status_after_txn(
-                pi, txn.transaction_type, new_txn_status
-            )
+            new_intent_status = intent_status_after_txn(pi, txn.transaction_type, new_txn_status)
             if new_intent_status:
                 pi.status = new_intent_status
             pi.save(update_fields=["amount_authorized", "amount_captured", "status"])
@@ -500,9 +494,9 @@ class PaymentServices:
 
         pi.refresh_from_db()
         if (
-                txn.transaction_type == Transaction.Type.AUTHORIZATION
-                and pi.status == PaymentIntent.Status.AUTHORIZED
-                and pi.chargeable_event.auto_capture
+            txn.transaction_type == Transaction.Type.AUTHORIZATION
+            and pi.status == PaymentIntent.Status.AUTHORIZED
+            and pi.chargeable_event.auto_capture
         ):
             cls.schedule_auto_capture(pi)
 
@@ -548,13 +542,12 @@ class PaymentServices:
                 "chargeable_event__provider",
                 "chargeable_event__provider_account",
             ).get(id=payment_intent_id)
-        except PaymentIntent.DoesNotExist:
-            raise ObjectDoesNotExist(f"PaymentIntent '{payment_intent_id}' not found.")
+        except PaymentIntent.DoesNotExist as err:
+            raise ObjectDoesNotExist(f"PaymentIntent '{payment_intent_id}' not found.") from err
 
         if pi.status not in allowed_statuses:
             raise PaymentError(
-                f"PaymentIntent is in status '{pi.status}'; "
-                f"expected one of {allowed_statuses}."
+                f"PaymentIntent is in status '{pi.status}'; expected one of {allowed_statuses}."
             )
         if pi.expires_at and pi.expires_at < timezone.now():
             raise PaymentError("PaymentIntent has expired.")
@@ -565,9 +558,7 @@ class PaymentServices:
     def _require_provider_capability(cls, pi: PaymentIntent, capability: str) -> None:
         provider = pi.chargeable_event.provider
         if not getattr(provider, capability, False):
-            raise PaymentError(
-                f"Provider '{provider.name}' does not support '{capability}'."
-            )
+            raise PaymentError(f"Provider '{provider.name}' does not support '{capability}'.")
 
     @classmethod
     def _get_last_successful_txn(
@@ -634,6 +625,7 @@ class PaymentServices:
         )
 
         from core.tasks import task_deliver_webhook
+
         task_deliver_webhook.apply_async(
             kwargs={"outbox_id": str(outbox.id)},
         )
@@ -657,18 +649,16 @@ class PaymentServices:
     def _get_system(cls, slug: str) -> System:
         try:
             return System.objects.get(slug=slug, is_active=True)
-        except System.DoesNotExist:
-            raise ObjectDoesNotExist(f"Active system with slug '{slug}' not found.")
+        except System.DoesNotExist as err:
+            raise ObjectDoesNotExist(f"Active system with slug '{slug}' not found.") from err
 
     @classmethod
     def _get_chargeable_event(cls, system: System, slug: str) -> ChargeableEvent:
         try:
-            return (
-                ChargeableEvent.objects
-                .select_related("provider", "provider_account")
-                .get(system=system, slug=slug, is_active=True)
+            return ChargeableEvent.objects.select_related("provider", "provider_account").get(
+                system=system, slug=slug, is_active=True
             )
-        except ChargeableEvent.DoesNotExist:
+        except ChargeableEvent.DoesNotExist as err:
             raise ObjectDoesNotExist(
                 f"Active chargeable event '{slug}' not found for system '{system.name}'."
-            )
+            ) from err

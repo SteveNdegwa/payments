@@ -11,7 +11,6 @@ urlpatterns = [
         views.initiate_payment,
         name="initiate-payment",
     ),
-
     # Post-authorization operations
     path(
         "payments/<str:payment_intent_id>/capture/",
@@ -28,7 +27,6 @@ urlpatterns = [
         views.refund_payment,
         name="refund-payment",
     ),
-
     # Provider callbacks
     path(
         "payments/callbacks/<str:provider_slug>/<str:transaction_id>/",

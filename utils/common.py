@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Optional, Any
+from typing import Any
 
 from django.core.handlers.wsgi import WSGIRequest
 
@@ -13,24 +13,25 @@ def get_request_data(request: WSGIRequest) -> tuple[dict, dict]:
             return {}, {}
 
         method = request.method
-        content_type = request.META.get('CONTENT_TYPE', '')
+        content_type = request.META.get("CONTENT_TYPE", "")
 
         data = {}
         files = {}
 
-        if 'application/json' in content_type:
+        if "application/json" in content_type:
             try:
                 data = json.loads(request.body)
             except json.JSONDecodeError:
                 data = {}
-        elif method in ['POST', 'PUT', 'PATCH']:
+        elif method in ["POST", "PUT", "PATCH"]:
             data = request.POST.dict()
-        elif method == 'GET':
+        elif method == "GET":
             data = request.GET.dict()
 
         if request.FILES:
             files = {
-                key: request.FILES.getlist(key) if len(request.FILES.getlist(key)) > 1
+                key: request.FILES.getlist(key)
+                if len(request.FILES.getlist(key)) > 1
                 else request.FILES[key]
                 for key in request.FILES
             }
@@ -45,11 +46,11 @@ def get_request_data(request: WSGIRequest) -> tuple[dict, dict]:
         return data, files
 
     except Exception as ex:
-        logger.exception('get_request_data Exception: %s' % ex)
+        logger.exception("get_request_data Exception: %s", ex)
         return {}, {}
 
 
-def sanitize_data(data: Optional[dict]) -> Optional[dict]:
+def sanitize_data(data: dict | None) -> dict | None:
     sensitive_keys = {}
 
     if data is None:
@@ -58,8 +59,7 @@ def sanitize_data(data: Optional[dict]) -> Optional[dict]:
     def _sanitize(obj: Any) -> Any:
         if isinstance(obj, dict):
             return {
-                k: ("****" if k.lower() in sensitive_keys else _sanitize(v))
-                for k, v in obj.items()
+                k: ("****" if k.lower() in sensitive_keys else _sanitize(v)) for k, v in obj.items()
             }
         elif isinstance(obj, list):
             return [_sanitize(item) for item in obj]
@@ -76,17 +76,17 @@ def get_client_ip(request: WSGIRequest) -> str:
         value = value.strip()
         return value if value else None
 
-    source_ip = clean_ip(request.META.get('HTTP_X_SOURCE_IP'))
+    source_ip = clean_ip(request.META.get("HTTP_X_SOURCE_IP"))
     if source_ip:
         return source_ip
 
-    x_forwarded_for = clean_ip(request.META.get('HTTP_X_FORWARDED_FOR'))
+    x_forwarded_for = clean_ip(request.META.get("HTTP_X_FORWARDED_FOR"))
     if x_forwarded_for:
-        first_ip = clean_ip(x_forwarded_for.split(',')[0])
+        first_ip = clean_ip(x_forwarded_for.split(",")[0])
         if first_ip:
             return first_ip
 
-    remote_addr = clean_ip(request.META.get('REMOTE_ADDR'))
+    remote_addr = clean_ip(request.META.get("REMOTE_ADDR"))
     return remote_addr
 
 
@@ -98,6 +98,4 @@ def check_required_fields(payload: dict[str, Any], required_fields: set[str]) ->
     }
 
     if missing_fields:
-        raise ValueError(
-            f"Missing or empty required fields: {', '.join(sorted(missing_fields))}"
-        )
+        raise ValueError(f"Missing or empty required fields: {', '.join(sorted(missing_fields))}")

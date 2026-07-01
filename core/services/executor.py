@@ -1,8 +1,6 @@
 import logging
-import os
 from datetime import timedelta
 from decimal import Decimal
-from typing import Optional
 from urllib.parse import urljoin
 
 from django.conf import settings
@@ -11,11 +9,10 @@ from django.utils import timezone
 
 from core.models import (
     PaymentIntent,
-    ReconciliationRecord,
     Transaction,
     TransactionStateLog,
 )
-from core.providers.base_provider import ProviderResult, ProviderResultStatus, BaseProvider
+from core.providers.base_provider import BaseProvider, ProviderResult, ProviderResultStatus
 from core.services.registry import get_provider_instance
 
 logger = logging.getLogger(__name__)
@@ -35,7 +32,7 @@ def intent_status_after_txn(
     intent: PaymentIntent,
     txn_type: str,
     txn_status: str,
-) -> Optional[str]:
+) -> str | None:
     """
     Map a completed transaction onto its parent PaymentIntent status.
     Returns None if the intent status should not change.
@@ -55,14 +52,14 @@ def intent_status_after_txn(
     if txn_type == Transaction.Type.AUTHORIZATION:
         return PaymentIntent.Status.AUTHORIZED
     if txn_type == Transaction.Type.CAPTURE:
-        new_captured = (intent.amount_captured or 0)
+        new_captured = intent.amount_captured or 0
         if new_captured >= intent.amount:
             return PaymentIntent.Status.CAPTURED
         return PaymentIntent.Status.PARTIALLY_CAPTURED
     if txn_type == Transaction.Type.VOID:
         return PaymentIntent.Status.CANCELLED
     if txn_type in (Transaction.Type.REFUND, Transaction.Type.PARTIAL_REFUND):
-        new_refunded = (intent.amount_refunded or 0)
+        new_refunded = intent.amount_refunded or 0
         if new_refunded >= intent.amount_captured:
             return PaymentIntent.Status.REFUNDED
         return PaymentIntent.Status.PARTIALLY_REFUNDED
@@ -233,10 +230,15 @@ class TransactionExecutor:
             if new_intent_status:
                 pi.status = new_intent_status
 
-            pi.save(update_fields=[
-                "amount_authorized", "amount_captured", "amount_refunded",
-                "next_action", "status",
-            ])
+            pi.save(
+                update_fields=[
+                    "amount_authorized",
+                    "amount_captured",
+                    "amount_refunded",
+                    "next_action",
+                    "status",
+                ]
+            )
 
         return txn
 
