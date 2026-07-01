@@ -1,57 +1,64 @@
 from datetime import timedelta
+
 from django.db import models
+
 from base.models import BaseModel
 
 
 class RateLimitRule(BaseModel):
     SCOPE_CHOICES = [
-        ('global', 'Global'),
-        ('api_client', 'API Client'),
-        ('user', 'Per User'),
-        ('ip', 'Per IP'),
-        ('endpoint', 'Per Endpoint'),
-        ('api_client_endpoint', 'Per API Client + Endpoint'),
-        ('user_endpoint', 'Per User + Endpoint'),
-        ('ip_endpoint', 'Per IP + Endpoint'),
+        ("global", "Global"),
+        ("api_client", "API Client"),
+        ("user", "Per User"),
+        ("ip", "Per IP"),
+        ("endpoint", "Per Endpoint"),
+        ("api_client_endpoint", "Per API Client + Endpoint"),
+        ("user_endpoint", "Per User + Endpoint"),
+        ("ip_endpoint", "Per IP + Endpoint"),
     ]
 
     PERIOD_CHOICES = [
-        ('second', 'Second'),
-        ('minute', 'Minute'),
-        ('hour', 'Hour'),
-        ('day', 'Day'),
-        ('week', 'Week'),
-        ('month', 'Month'),
+        ("second", "Second"),
+        ("minute", "Minute"),
+        ("hour", "Hour"),
+        ("day", "Day"),
+        ("week", "Week"),
+        ("month", "Month"),
     ]
 
     name = models.CharField(max_length=100, unique=True)
     scope = models.CharField(max_length=20, choices=SCOPE_CHOICES)
     limit = models.PositiveIntegerField(help_text="Number of requests allowed")
     period = models.CharField(max_length=10, choices=PERIOD_CHOICES)
-    period_count = models.PositiveIntegerField(default=1, help_text="Number of periods (e.g., 2 for '2 hours')")
-    endpoint_pattern = models.CharField(max_length=200, blank=True, help_text="Regex pattern for URL matching")
-    http_methods = models.CharField(max_length=50, blank=True, help_text="Comma-separated HTTP methods (GET,POST,etc)")
+    period_count = models.PositiveIntegerField(
+        default=1, help_text="Number of periods (e.g., 2 for '2 hours')"
+    )
+    endpoint_pattern = models.CharField(
+        max_length=200, blank=True, help_text="Regex pattern for URL matching"
+    )
+    http_methods = models.CharField(
+        max_length=50, blank=True, help_text="Comma-separated HTTP methods (GET,POST,etc)"
+    )
     is_active = models.BooleanField(default=True)
     priority = models.IntegerField(default=0, help_text="Higher priority rules are checked first")
     block_duration_minutes = models.PositiveIntegerField(
-        default=0,
-        help_text="Block duration after limit exceeded (0 = no blocking)"
+        default=0, help_text="Block duration after limit exceeded (0 = no blocking)"
     )
 
     class Meta:
-        ordering = ['name', '-priority']
+        ordering = ["name", "-priority"]
 
     def __str__(self):
         return f"{self.name}: {self.limit}/{self.period_count} {self.period}(s) - {self.scope}"
 
     def get_period_timedelta(self):
         period_map = {
-            'second': timedelta(seconds=self.period_count),
-            'minute': timedelta(minutes=self.period_count),
-            'hour': timedelta(hours=self.period_count),
-            'day': timedelta(days=self.period_count),
-            'week': timedelta(weeks=self.period_count),
-            'month': timedelta(days=self.period_count * 30),
+            "second": timedelta(seconds=self.period_count),
+            "minute": timedelta(minutes=self.period_count),
+            "hour": timedelta(hours=self.period_count),
+            "day": timedelta(days=self.period_count),
+            "week": timedelta(weeks=self.period_count),
+            "month": timedelta(days=self.period_count * 30),
         }
         return period_map.get(self.period, timedelta(minutes=self.period_count))
 
@@ -66,11 +73,11 @@ class RateLimitAttempt(BaseModel):
     last_attempt = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['-last_attempt']
-        unique_together = ['rule', 'key', 'endpoint', 'window_start']
+        ordering = ["-last_attempt"]
+        unique_together = ["rule", "key", "endpoint", "window_start"]
         indexes = [
-            models.Index(fields=['rule', 'key', 'window_start']),
-            models.Index(fields=['window_start']),
+            models.Index(fields=["rule", "key", "window_start"]),
+            models.Index(fields=["window_start"]),
         ]
 
 
@@ -80,5 +87,5 @@ class RateLimitBlock(BaseModel):
     blocked_until = models.DateTimeField(db_index=True)
 
     class Meta:
-        ordering = ['-updated_at']
-        unique_together = ['rule', 'key']
+        ordering = ["-updated_at"]
+        unique_together = ["rule", "key"]

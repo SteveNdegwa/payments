@@ -2,13 +2,12 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from decimal import Decimal
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 logger = logging.getLogger(__name__)
 
 
-class ProviderResultStatus(str, Enum):
+class ProviderResultStatus(StrEnum):
     SUCCESS = "SUCCESS"
     PENDING = "PENDING"
     REQUIRES_ACTION = "REQUIRES_ACTION"
@@ -25,9 +24,9 @@ class ProviderResult:
     failure_code: str = ""
     failure_reason: str = ""
     # For REQUIRES_ACTION flows (3DS redirect, STK push, etc.)
-    next_action: Optional[dict] = None
+    next_action: dict | None = None
     # Amount actually processed (for partial captures, etc.)
-    amount_processed: Optional[Decimal] = None
+    amount_processed: Decimal | None = None
 
 
 class BaseProvider(ABC):
@@ -36,38 +35,48 @@ class BaseProvider(ABC):
         self.config = config or {}
 
     # Core payment flows
+    @abstractmethod
     def charge(self, *, amount: Decimal, currency: str, payload: dict) -> ProviderResult:
         """Single-step charge (mobile money, wallets, etc.)."""
         raise NotImplementedError
 
+    @abstractmethod
     def authorize(self, *, amount: Decimal, currency: str, payload: dict) -> ProviderResult:
         """Auth-only (cards with authorize-capture flow)."""
         raise NotImplementedError
 
-    def capture(self, *, provider_transaction_id: str, amount: Decimal, payload: dict) -> ProviderResult:
+    @abstractmethod
+    def capture(
+        self, *, provider_transaction_id: str, amount: Decimal, payload: dict
+    ) -> ProviderResult:
         """Capture a previously authorised amount."""
         raise NotImplementedError
 
+    @abstractmethod
     def void(self, *, provider_transaction_id: str, payload: dict) -> ProviderResult:
         """Void / reverse an authorisation before capture."""
         raise NotImplementedError
 
-    def refund(self, *, provider_transaction_id: str, amount: Decimal, payload: dict) -> ProviderResult:
+    @abstractmethod
+    def refund(
+        self, *, provider_transaction_id: str, amount: Decimal, payload: dict
+    ) -> ProviderResult:
         """Full or partial refund on a captured transaction."""
         raise NotImplementedError
 
-
     # Reconciliation
+    @abstractmethod
     def query_status(self, *, provider_transaction_id: str, payload: dict) -> ProviderResult:
         """Poll provider for the current status of a transaction."""
         raise NotImplementedError
 
-
     # Webhook / callback verification
+    @abstractmethod
     def verify_callback(self, *, headers: dict, payload: dict) -> bool:
         """Verify an inbound provider callback is authentic."""
         raise NotImplementedError
 
+    @abstractmethod
     def parse_callback(self, *, payload: dict) -> ProviderResult:
         """Translate provider callback payload into a ProviderResult."""
         raise NotImplementedError

@@ -49,6 +49,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "**/settings.py" = ["F403", "F405"]
 "**/tests.py" = ["S101"]
+"audit/models.py" = ["DJ001"]
+"core/models.py" = ["DJ001"]
 
 [tool.ruff.format]
 quote-style = "double"

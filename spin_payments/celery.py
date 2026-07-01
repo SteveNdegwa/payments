@@ -6,6 +6,7 @@ Usage:
 """
 
 import os
+
 from celery import Celery
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "spin_payments.settings")

@@ -1,12 +1,12 @@
+import base64
 import logging
+from datetime import datetime
 from decimal import Decimal
 
 import requests
 from django.core.exceptions import ValidationError
 from requests import RequestException
 from requests.auth import HTTPBasicAuth
-from datetime import datetime
-import base64
 
 from core.providers.base_provider import BaseProvider, ProviderResult, ProviderResultStatus
 from core.services.registry import register_provider
@@ -27,12 +27,10 @@ class MpesaDarajaProvider(BaseProvider):
             # "initiator_name",
             # "security_credential",
         }
-        missing_fields = [
-            field for field in required_fields if not self.credentials.get(field)
-        ]
+        missing_fields = [field for field in required_fields if not self.credentials.get(field)]
         if missing_fields:
             raise ValidationError(
-                f"Daraja config missing required fields: {", ".join(missing_fields)}"
+                f"Daraja config missing required fields: {', '.join(missing_fields)}"
             )
 
     @property
@@ -47,10 +45,7 @@ class MpesaDarajaProvider(BaseProvider):
 
     @property
     def headers(self) -> dict:
-        return {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
-        }
+        return {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
 
     def charge(self, amount: Decimal, currency: str, payload: dict) -> ProviderResult:
         try:
@@ -69,9 +64,7 @@ class MpesaDarajaProvider(BaseProvider):
             base_url = self.credentials["base_url"]
 
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            password = base64.b64encode(
-                f"{shortcode}{passkey}{timestamp}".encode()
-            ).decode()
+            password = base64.b64encode(f"{shortcode}{passkey}{timestamp}".encode()).decode()
 
             phone_number = payload["phone_number"]
             callback_url = payload["callback_url"]
@@ -131,11 +124,11 @@ class MpesaDarajaProvider(BaseProvider):
             )
 
     def refund(
-            self,
-            *,
-            provider_transaction_id: str,
-            amount: Decimal,
-            payload: dict,
+        self,
+        *,
+        provider_transaction_id: str,
+        amount: Decimal,
+        payload: dict,
     ) -> ProviderResult:
         try:
             shortcode = self.credentials["business_shortcode"]
@@ -152,7 +145,7 @@ class MpesaDarajaProvider(BaseProvider):
                 "ReceiverParty": shortcode,
                 "ReceiverIdentifierType": "4",
                 "ResultURL": payload.get("callback_url", ""),
-                "QueueTimeOutURL": payload.get("callback_url", ''),
+                "QueueTimeOutURL": payload.get("callback_url", ""),
                 "Remarks": payload.get("remarks", "Refund"),
                 "Occasion": payload.get("occasion", ""),
             }

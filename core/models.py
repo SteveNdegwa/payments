@@ -1,6 +1,7 @@
 import hashlib
 import re
 import secrets
+
 from django.db import models
 from django.utils import timezone
 from django.utils.safestring import mark_safe
@@ -20,19 +21,11 @@ class System(BaseModel):
     webhook_url = models.URLField()
     webhook_secret = models.CharField(max_length=255, null=True, blank=True)
     max_transaction_amount = models.DecimalField(
-        max_digits=20,
-        decimal_places=6,
-        null=True,
-        blank=True
+        max_digits=20, decimal_places=6, null=True, blank=True
     )
     allowed_currencies = models.JSONField(default=list, blank=True)
     rate_limit_per_minute = models.IntegerField(default=60)
-    daily_volume_limit = models.DecimalField(
-        max_digits=20,
-        decimal_places=6,
-        null=True,
-        blank=True
-    )
+    daily_volume_limit = models.DecimalField(max_digits=20, decimal_places=6, null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
@@ -40,17 +33,13 @@ class System(BaseModel):
 
     def save(self, *args, **kwargs):
         if self.hashed_api_key and not re.search(r"^[a-f0-9]{64}$", self.hashed_api_key):
-            self.hashed_api_key = hashlib.sha256(
-                self.hashed_api_key.encode("utf-8")
-            ).hexdigest()
+            self.hashed_api_key = hashlib.sha256(self.hashed_api_key.encode("utf-8")).hexdigest()
         super().save(*args, **kwargs)
 
     def verify_api_key(self, raw_key: str) -> bool:
         if not self.hashed_api_key:
             return False
-        return self.hashed_api_key == hashlib.sha256(
-            raw_key.encode("utf-8")
-        ).hexdigest()
+        return self.hashed_api_key == hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
 
 class PaymentMethodType(BaseModel):
@@ -101,11 +90,7 @@ class ProviderAccount(BaseModel):
         PRODUCTION = "PRODUCTION", "Production"
         SANDBOX = "SANDBOX", "Sandbox"
 
-    provider = models.ForeignKey(
-        Provider,
-        on_delete=models.PROTECT,
-        related_name="accounts"
-    )
+    provider = models.ForeignKey(Provider, on_delete=models.PROTECT, related_name="accounts")
     name = models.CharField(max_length=255)
     environment = models.CharField(
         max_length=20,
@@ -139,23 +124,15 @@ class ChargeableEvent(BaseModel):
         SYSTEM = "SYSTEM", "To owning System"
         SOURCE_SYSTEM = "SOURCE_SYSTEM", "To the Source System that initiated the payment"
 
-    system = models.ForeignKey(
-        System,
-        on_delete=models.PROTECT,
-        related_name="chargeable_events"
-    )
+    system = models.ForeignKey(System, on_delete=models.PROTECT, related_name="chargeable_events")
     name = models.CharField(max_length=255)
     slug = models.SlugField()
     description = models.TextField(blank=True)
     provider = models.ForeignKey(
-        Provider,
-        on_delete=models.PROTECT,
-        related_name="chargeable_events"
+        Provider, on_delete=models.PROTECT, related_name="chargeable_events"
     )
     provider_account = models.ForeignKey(
-        ProviderAccount,
-        on_delete=models.PROTECT,
-        related_name="chargeable_events"
+        ProviderAccount, on_delete=models.PROTECT, related_name="chargeable_events"
     )
     flow = models.CharField(
         max_length=20,
@@ -166,8 +143,7 @@ class ChargeableEvent(BaseModel):
     auto_capture = models.BooleanField(
         default=False,
         help_text=(
-            "AUTHORIZE_CAPTURE flow only. "
-            "Automatically capture after a successful authorization."
+            "AUTHORIZE_CAPTURE flow only. Automatically capture after a successful authorization."
         ),
     )
     capture_delay_hours = models.IntegerField(
@@ -177,12 +153,7 @@ class ChargeableEvent(BaseModel):
             "0 means capture immediately. Only used when auto_capture=True."
         ),
     )
-    fixed_amount = models.DecimalField(
-        max_digits=20,
-        decimal_places=6,
-        null=True,
-        blank=True
-    )
+    fixed_amount = models.DecimalField(max_digits=20, decimal_places=6, null=True, blank=True)
     currency = models.CharField(max_length=3, default="KES")
     callback_destination = models.CharField(
         max_length=20,
@@ -211,16 +182,8 @@ class PaymentMethodToken(BaseModel):
         MOBILE = "MOBILE", "Mobile Number"
         BANK_ACCOUNT = "BANK_ACCOUNT", "Bank Account"
 
-    system = models.ForeignKey(
-        System,
-        on_delete=models.PROTECT,
-        related_name="payment_tokens"
-    )
-    provider = models.ForeignKey(
-        Provider,
-        on_delete=models.PROTECT,
-        related_name="payment_tokens"
-    )
+    system = models.ForeignKey(System, on_delete=models.PROTECT, related_name="payment_tokens")
+    provider = models.ForeignKey(Provider, on_delete=models.PROTECT, related_name="payment_tokens")
     token_type = models.CharField(max_length=20, choices=TokenType.choices)
     provider_token = models.CharField(max_length=500)
     masked_identifier = models.CharField(max_length=100, blank=True)
@@ -251,20 +214,18 @@ class PaymentIntent(BaseModel):
         PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED", "Partially Refunded"
         EXPIRED = "EXPIRED", "Expired"
 
-    TERMINAL_STATUSES = frozenset({
-        Status.SETTLED,
-        Status.FAILED,
-        Status.CANCELLED,
-        Status.REFUNDED,
-        Status.EXPIRED,
-    })
+    TERMINAL_STATUSES = frozenset(
+        {
+            Status.SETTLED,
+            Status.FAILED,
+            Status.CANCELLED,
+            Status.REFUNDED,
+            Status.EXPIRED,
+        }
+    )
 
     # The system that owns this intent
-    system = models.ForeignKey(
-        System,
-        on_delete=models.PROTECT,
-        related_name="payment_intents"
-    )
+    system = models.ForeignKey(System, on_delete=models.PROTECT, related_name="payment_intents")
     # The system that triggered this intent
     source_system = models.ForeignKey(
         System,
@@ -303,11 +264,7 @@ class PaymentIntent(BaseModel):
     external_reference = models.CharField(max_length=255, blank=True)
     metadata = models.JSONField(default=dict, null=True, blank=True)
     expires_at = models.DateTimeField(null=True, blank=True)
-    status = models.CharField(
-        max_length=30,
-        choices=Status.choices,
-        default=Status.INITIATED
-    )
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.INITIATED)
 
     class Meta:
         unique_together = ("system", "idempotency_key")
@@ -352,26 +309,20 @@ class Transaction(BaseModel):
         SUCCESS = "SUCCESS", "Success"
         FAILED = "FAILED", "Failed"
 
-    TERMINAL_STATUSES = frozenset({
-        Status.SUCCESS,
-        Status.FAILED,
-    })
+    TERMINAL_STATUSES = frozenset(
+        {
+            Status.SUCCESS,
+            Status.FAILED,
+        }
+    )
 
     payment_intent = models.ForeignKey(
-        PaymentIntent,
-        on_delete=models.PROTECT,
-        related_name="transactions"
+        PaymentIntent, on_delete=models.PROTECT, related_name="transactions"
     )
     transaction_type = models.CharField(max_length=30, choices=Type.choices)
-    provider = models.ForeignKey(
-        Provider,
-        on_delete=models.PROTECT,
-        related_name="transactions"
-    )
+    provider = models.ForeignKey(Provider, on_delete=models.PROTECT, related_name="transactions")
     provider_account = models.ForeignKey(
-        ProviderAccount,
-        on_delete=models.PROTECT,
-        related_name="transactions"
+        ProviderAccount, on_delete=models.PROTECT, related_name="transactions"
     )
     amount = models.DecimalField(max_digits=20, decimal_places=6)
     currency = models.CharField(max_length=3)
@@ -382,11 +333,7 @@ class Transaction(BaseModel):
     failure_reason = models.TextField(blank=True)
     failure_code = models.CharField(max_length=100, blank=True)
     celery_task_id = models.CharField(max_length=255, blank=True)
-    status = models.CharField(
-        max_length=30,
-        choices=Status.choices,
-        default=Status.PENDING
-    )
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.PENDING)
     provider_callback_received_at = models.DateTimeField(null=True, blank=True)
     reconciliation_due_at = models.DateTimeField(null=True, blank=True)
     reconciliation_attempts = models.IntegerField(default=0)
@@ -408,9 +355,7 @@ class Transaction(BaseModel):
 
 class TransactionStateLog(BaseModel):
     transaction = models.ForeignKey(
-        Transaction,
-        on_delete=models.PROTECT,
-        related_name="state_logs"
+        Transaction, on_delete=models.PROTECT, related_name="state_logs"
     )
     from_status = models.CharField(max_length=30, blank=True)
     to_status = models.CharField(max_length=30)
@@ -452,16 +397,8 @@ class LedgerPosting(BaseModel):
         DEBIT = "DEBIT", "Debit"
         CREDIT = "CREDIT", "Credit"
 
-    transaction = models.ForeignKey(
-        Transaction,
-        on_delete=models.PROTECT,
-        related_name="postings"
-    )
-    account = models.ForeignKey(
-        LedgerAccount,
-        on_delete=models.PROTECT,
-        related_name="postings"
-    )
+    transaction = models.ForeignKey(Transaction, on_delete=models.PROTECT, related_name="postings")
+    account = models.ForeignKey(LedgerAccount, on_delete=models.PROTECT, related_name="postings")
     entry_type = models.CharField(max_length=10, choices=EntryType.choices)
     amount = models.DecimalField(max_digits=20, decimal_places=6)
     currency = models.CharField(max_length=3)
@@ -480,15 +417,9 @@ class WebhookOutbox(BaseModel):
         FAILED = "FAILED", "Failed"
         EXHAUSTED = "EXHAUSTED", "Exhausted"
 
-    system = models.ForeignKey(
-        System,
-        on_delete=models.PROTECT,
-        related_name="webhook_outbox"
-    )
+    system = models.ForeignKey(System, on_delete=models.PROTECT, related_name="webhook_outbox")
     payment_intent = models.ForeignKey(
-        PaymentIntent,
-        on_delete=models.PROTECT,
-        related_name="webhook_outbox"
+        PaymentIntent, on_delete=models.PROTECT, related_name="webhook_outbox"
     )
     transaction = models.ForeignKey(
         Transaction,
@@ -500,11 +431,7 @@ class WebhookOutbox(BaseModel):
     event_type = models.CharField(max_length=100)
     payload = models.JSONField()
     destination_url = models.URLField()
-    status = models.CharField(
-        max_length=20,
-        choices=Status.choices,
-        default=Status.PENDING
-    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     attempt_count = models.IntegerField(default=0)
     max_attempts = models.IntegerField(default=5)
     next_attempt_at = models.DateTimeField(default=timezone.now)
@@ -518,9 +445,7 @@ class WebhookOutbox(BaseModel):
 
 class WebhookDeliveryLog(BaseModel):
     outbox = models.ForeignKey(
-        WebhookOutbox,
-        on_delete=models.CASCADE,
-        related_name="delivery_logs"
+        WebhookOutbox, on_delete=models.CASCADE, related_name="delivery_logs"
     )
     attempt_number = models.IntegerField()
     request_headers = models.JSONField(default=dict)
@@ -541,11 +466,7 @@ class ProviderCallbackLog(BaseModel):
         REJECTED = "REJECTED", "Rejected"
         IGNORED = "IGNORED", "Ignored"
 
-    provider = models.ForeignKey(
-        Provider,
-        on_delete=models.PROTECT,
-        related_name="callback_logs"
-    )
+    provider = models.ForeignKey(Provider, on_delete=models.PROTECT, related_name="callback_logs")
     transaction = models.ForeignKey(
         Transaction,
         on_delete=models.PROTECT,
@@ -580,15 +501,9 @@ class ReconciliationRecord(BaseModel):
         RESOLVED = "RESOLVED", "Resolved"
 
     transaction = models.OneToOneField(
-        Transaction,
-        on_delete=models.PROTECT,
-        related_name="reconciliation"
+        Transaction, on_delete=models.PROTECT, related_name="reconciliation"
     )
-    status = models.CharField(
-        max_length=20,
-        choices=Status.choices,
-        default=Status.PENDING
-    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     provider_reported_status = models.CharField(max_length=100, blank=True)
     discrepancy_notes = models.TextField(blank=True)
     resolved_by = models.CharField(max_length=255, blank=True)

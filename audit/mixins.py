@@ -31,7 +31,7 @@ class AuditableMixin:
         return False
 
     def save(self, *args, **kwargs):
-        from audit.models import AuditEventType, AuditSeverity, AuditLog
+        from audit.models import AuditEventType, AuditLog, AuditSeverity
 
         is_new = self.pk is None
 
@@ -61,19 +61,19 @@ class AuditableMixin:
                 new_value = getattr(self, field.name, None)
                 if old_value != new_value:
                     changes[field.name] = {
-                        'old_value': old_value,
-                        'new_value': new_value,
+                        "old_value": old_value,
+                        "new_value": new_value,
                     }
 
         AuditLog.objects.create(
-            request_id=context.get('request_id'),
-            api_client=context.get('api_client'),
-            user=context.get('user'),
-            ip_address=context.get('ip_address'),
-            user_agent=context.get('user_agent'),
-            request_method=context.get('request_method'),
-            request_path=context.get('request_path'),
-            activity_name=context.get('activity_name'),
+            request_id=context.get("request_id"),
+            api_client=context.get("api_client"),
+            user=context.get("user"),
+            ip_address=context.get("ip_address"),
+            user_agent=context.get("user_agent"),
+            request_method=context.get("request_method"),
+            request_path=context.get("request_path"),
+            activity_name=context.get("activity_name"),
             event_type=event_type,
             severity=AuditSeverity.LOW if is_new else AuditSeverity.MEDIUM,
             content_type=ContentType.objects.get_for_model(self.__class__),
@@ -85,7 +85,7 @@ class AuditableMixin:
         return result
 
     def delete(self, *args, **kwargs):
-        from audit.models import AuditEventType, AuditSeverity, AuditLog
+        from audit.models import AuditEventType, AuditLog, AuditSeverity
 
         if not self._is_tracking_enabled(AuditEventType.DELETE):
             return super().delete(*args, **kwargs)
@@ -100,21 +100,21 @@ class AuditableMixin:
         }
 
         AuditLog.objects.create(
-            request_id=context.get('request_id'),
-            api_client=context.get('api_client'),
-            user=context.get('user'),
-            ip_address=context.get('ip_address'),
-            user_agent=context.get('user_agent'),
-            request_method=context.get('request_method'),
-            request_path=context.get('request_path'),
-            activity_name=context.get('activity_name'),
+            request_id=context.get("request_id"),
+            api_client=context.get("api_client"),
+            user=context.get("user"),
+            ip_address=context.get("ip_address"),
+            user_agent=context.get("user_agent"),
+            request_method=context.get("request_method"),
+            request_path=context.get("request_path"),
+            activity_name=context.get("activity_name"),
             event_type=AuditEventType.DELETE,
             severity=AuditSeverity.MEDIUM,
             content_type=ContentType.objects.get_for_model(self.__class__),
             object_id=str(self.pk),
             object_repr=str(self),
             changes=None,
-            metadata={'deleted_object_data': deleted_data},
+            metadata={"deleted_object_data": deleted_data},
         )
 
         return super().delete(*args, **kwargs)

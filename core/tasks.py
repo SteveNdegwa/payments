@@ -2,7 +2,6 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import time
 from datetime import timedelta
 from decimal import Decimal
@@ -15,43 +14,45 @@ from django.utils import timezone
 
 from core.models import (
     PaymentIntent,
+    ProviderCallbackLog,
     ReconciliationRecord,
     Transaction,
+    WebhookDeliveryLog,
     WebhookOutbox,
-    WebhookDeliveryLog, ProviderCallbackLog,
 )
 
 logger = logging.getLogger(__name__)
 
 
-_PROVIDER_RETRY = dict(
-    max_retries=3,
-    autoretry_for=(Exception,),
-    retry_backoff=True,
-    retry_backoff_max=120,
-    retry_jitter=True,
-)
+_PROVIDER_RETRY = {
+    "max_retries": 3,
+    "autoretry_for": (Exception,),
+    "retry_backoff": True,
+    "retry_backoff_max": 120,
+    "retry_jitter": True,
+}
 
-_RECONCILE_RETRY = dict(
-    max_retries=10,
-    autoretry_for=(Exception,),
-    retry_backoff=True,
-    retry_backoff_max=600,
-    retry_jitter=True,
-)
+_RECONCILE_RETRY = {
+    "max_retries": 10,
+    "autoretry_for": (Exception,),
+    "retry_backoff": True,
+    "retry_backoff_max": 600,
+    "retry_jitter": True,
+}
 
-_WEBHOOK_RETRY = dict(
-    max_retries=5,
-    autoretry_for=(Exception,),
-    retry_backoff=True,
-    retry_backoff_max=3600,
-    retry_jitter=True,
-)
+_WEBHOOK_RETRY = {
+    "max_retries": 5,
+    "autoretry_for": (Exception,),
+    "retry_backoff": True,
+    "retry_backoff_max": 3600,
+    "retry_jitter": True,
+}
 
 
 @shared_task(name="payments.charge", queue="payments.high", bind=True, **_PROVIDER_RETRY)
 def task_charge(self, payment_intent_id: str):
     from core.services.payment_services import PaymentServices
+
     try:
         txn = PaymentServices.execute_charge(
             payment_intent_id=payment_intent_id,
@@ -66,6 +67,7 @@ def task_charge(self, payment_intent_id: str):
 @shared_task(name="payments.authorize", queue="payments.high", bind=True, **_PROVIDER_RETRY)
 def task_authorize(self, payment_intent_id: str):
     from core.services.payment_services import PaymentServices
+
     try:
         txn = PaymentServices.execute_authorize(
             payment_intent_id=payment_intent_id,
@@ -85,6 +87,7 @@ def task_capture(
     payload: dict | None = None,
 ):
     from core.services.payment_services import PaymentServices
+
     try:
         txn = PaymentServices.execute_capture(
             payment_intent_id=payment_intent_id,
@@ -100,6 +103,7 @@ def task_capture(
 @shared_task(name="payments.void", queue="payments.high", bind=True, **_PROVIDER_RETRY)
 def task_void(self, payment_intent_id: str, payload: dict | None = None):
     from core.services.payment_services import PaymentServices
+
     try:
         txn = PaymentServices.execute_void(
             payment_intent_id=payment_intent_id,
@@ -119,6 +123,7 @@ def task_refund(
     payload: dict | None = None,
 ):
     from core.services.payment_services import PaymentServices
+
     try:
         txn = PaymentServices.execute_refund(
             payment_intent_id=payment_intent_id,
@@ -174,8 +179,9 @@ def task_process_provider_callback(self, callback_log_id: str):
 )
 def task_reconcile_transaction(self, transaction_id: str):
     from core.providers.base_provider import ProviderResultStatus
-    from core.services.registry import get_provider_instance
     from core.services.payment_services import PaymentServices
+    from core.services.registry import get_provider_instance
+
     try:
         txn = Transaction.objects.select_related(
             "payment_intent__chargeable_event",
@@ -206,13 +212,10 @@ def task_reconcile_transaction(self, transaction_id: str):
     callback_path = f"/core/payments/callbacks/{txn.provider.slug}/{txn.id}/"
     callback_url = urljoin(f"{base_url}/", callback_path.lstrip("/"))
 
-    payload = {
-        "callback_url": callback_url
-    }
+    payload = {"callback_url": callback_url}
 
     result = provider_instance.query_status(
-        provider_transaction_id=txn.provider_transaction_id,
-        payload=payload
+        provider_transaction_id=txn.provider_transaction_id, payload=payload
     )
 
     rec.attempts += 1
@@ -225,7 +228,9 @@ def task_reconcile_transaction(self, transaction_id: str):
             rec.save(update_fields=["attempts", "last_attempted_at", "status"])
             logger.error(
                 "Reconcile: TXN %s exhausted %s retries without a final status — "
-                "escalated to MANUAL_REVIEW", txn.id, self.max_retries,
+                "escalated to MANUAL_REVIEW",
+                txn.id,
+                self.max_retries,
             )
             return
 
@@ -371,4 +376,3 @@ def task_scan_failed_webhooks():
         count += 1
 
     return count
-
