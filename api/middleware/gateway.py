@@ -38,10 +38,20 @@ class GatewayControlMiddleware:
 
     SAVE_REQUEST_LOG_EXEMPT_PATHS = ["/health", "/favicon.ico"]
 
+    # Health checks bypass the gateway entirely: no API-key check, no rate-limit
+    # DB queries, no request logging. Liveness/readiness probes hit /health on
+    # every interval, so running the rate-limit queries there couples the probe
+    # to the database — a transient DB blip would fail the probe and cycle
+    # otherwise-healthy pods.
+    HEALTH_CHECK_PATHS = ["/health"]
+
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
+        if any(request.path.startswith(p) for p in self.HEALTH_CHECK_PATHS):
+            return self.get_response(request)
+
         api_key_validation_required = True
 
         if request.path.startswith("/api/"):
