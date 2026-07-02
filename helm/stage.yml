@@ -215,9 +215,56 @@ initContainer:
       cpu: 50m
       memory: 64Mi
 
+celery:
+  enabled: true
+  worker:
+    enabled: true
+    replicaCount: 1
+    command: ["celery", "-A", "spin_payments", "worker"]
+    # core/tasks.py routes work to the payments.high / payments.low queues;
+    # the worker must consume both or those tasks never run.
+    args: ["-l", "info", "-Q", "payments.high,payments.low", "--concurrency", "2"]
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+      requests:
+        cpu: 50m
+        memory: 128Mi
+    autoscaling:
+      enabled: false
+  beat:
+    enabled: true
+    command: ["celery", "-A", "spin_payments", "beat"]
+    args: ["-l", "info"]
+    resources:
+      limits:
+        cpu: 200m
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+  flower:
+    enabled: false
+
+externalSecrets:
+  - name: payments-secrets
+    refreshInterval: 5m
+    secretStoreRefName: vault-backend
+    targetName: payments-secrets
+    dataKey: stage/ke/payments-secrets
+
 env:
   ENV: stage
   DEBUG: "true"
   APP_PATH: /var/www/spin_payments
   ALLOWED_HOSTS: "stage-payments.spinmobile.co"
   SECRET_KEY: "django-secure-replace-me-stage"
+
+secretEnv:
+  # Sourced from the payments-secrets external secret (Vault). Web, worker and
+  # beat pods all need the broker URL. Requires a `celery-broker-url` key at the
+  # dataKey path above.
+  CELERY_BROKER_URL:
+    name: payments-secrets
+    key: celery-broker-url

@@ -61,6 +61,9 @@ jobs:
       - name: Test static files collection
         run: uv run python manage.py collectstatic --noinput --dry-run
 
+      - name: Apply migrations
+        run: uv run python manage.py migrate --noinput
+
       - name: Test /healthz endpoint
         run: |
           uv run python manage.py runserver 0.0.0.0:8000 &
