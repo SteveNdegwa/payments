@@ -507,15 +507,21 @@ class ProviderAdmin(admin.ModelAdmin):
 
     @admin.display(description="Async")
     def is_async_colored(self, obj):
-        return format_html('<span style="color:#6c757d">Yes</span>' if obj.is_async else "No")
+        return format_html('<span style="color:#6c757d">{}</span>', "Yes") if obj.is_async else "No"
 
     @admin.display(description="Refund")
     def supports_refund_colored(self, obj):
-        return format_html('<span style="color:#28a745">Yes</span>') if obj.supports_refund else "—"
+        return (
+            format_html('<span style="color:#28a745">{}</span>', "Yes")
+            if obj.supports_refund
+            else "—"
+        )
 
     @admin.display(description="3DS")
     def supports_3ds_colored(self, obj):
-        return format_html('<span style="color:#17a2b8">Yes</span>') if obj.supports_3ds else "—"
+        return (
+            format_html('<span style="color:#17a2b8">{}</span>', "Yes") if obj.supports_3ds else "—"
+        )
 
 
 @admin.register(ProviderAccount)
@@ -543,7 +549,9 @@ class ProviderAccountAdmin(admin.ModelAdmin):
 
     @admin.display(description="Default")
     def is_default_colored(self, obj):
-        return format_html('<span style="color:#28a745">Yes</span>') if obj.is_default else "—"
+        return (
+            format_html('<span style="color:#28a745">{}</span>', "Yes") if obj.is_default else "—"
+        )
 
     @admin.display(description="Active")
     def is_active_colored(self, obj):
@@ -606,10 +614,9 @@ class ChargeableEventAdmin(admin.ModelAdmin):
 
     @admin.display(description="Active")
     def is_active_colored(self, obj):
+        color = "#28a745" if obj.is_active else "#dc3545"
         return format_html(
-            '<span style="color:#28a745">Yes</span>'
-            if obj.is_active
-            else '<span style="color:#dc3545">No</span>'
+            '<span style="color:{}">{}</span>', color, "Yes" if obj.is_active else "No"
         )
 
 
@@ -657,10 +664,9 @@ class PaymentMethodTokenAdmin(admin.ModelAdmin):
 
     @admin.display(description="Active")
     def is_active_colored(self, obj):
+        color = "#28a745" if obj.is_active else "#dc3545"
         return format_html(
-            '<span style="color:#28a745">Yes</span>'
-            if obj.is_active
-            else '<span style="color:#dc3545">No</span>'
+            '<span style="color:{}">{}</span>', color, "Yes" if obj.is_active else "No"
         )
 
 
@@ -1140,7 +1146,7 @@ class WebhookDeliveryLogAdmin(admin.ModelAdmin):
     def response_status_colored(self, obj):
         code = obj.response_status_code
         if code is None:
-            return format_html('<span style="color:#6c757d">—</span>')
+            return format_html('<span style="color:#6c757d">{}</span>', "—")
         if 200 <= code < 300:
             return format_html('<span style="color:#28a745;font-weight:500">{}</span>', code)
         elif 400 <= code < 500:

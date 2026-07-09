@@ -267,7 +267,6 @@ def task_expire_stale_intents():
         expires_at__lt=timezone.now(),
         status__in=[
             PaymentIntent.Status.INITIATED,
-            PaymentIntent.Status.PENDING,
             PaymentIntent.Status.PROCESSING,
         ],
     ).update(status=PaymentIntent.Status.EXPIRED)

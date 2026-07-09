@@ -200,7 +200,6 @@ class PaymentMethodToken(BaseModel):
 class PaymentIntent(BaseModel):
     class Status(models.TextChoices):
         INITIATED = "INITIATED", "Initiated"
-        PENDING = "PENDING", "Pending"
         REQUIRES_ACTION = "REQUIRES_ACTION", "Requires Customer Action"
         PROCESSING = "PROCESSING", "Processing"
         AUTHORIZED = "AUTHORIZED", "Authorized"
