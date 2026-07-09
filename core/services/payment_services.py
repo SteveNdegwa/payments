@@ -42,6 +42,7 @@ class PaymentServices:
         # Provider-specific data: phone number, return_url, etc.
         payment_payload: dict | None = None,
         payment_method_token_id: str | None = None,
+        external_reference: str | None = None,
         idempotency_key: str | None = None,
     ) -> PaymentIntent:
         idempotency_key = idempotency_key or str(uuid.uuid4())
@@ -88,6 +89,7 @@ class PaymentServices:
                     "amount": resolved_amount,
                     "currency": resolved_currency,
                     "payment_payload": payment_payload or {},
+                    "external_reference": external_reference,
                     "status": PaymentIntent.Status.INITIATED,
                     "expires_at": timezone.now() + timedelta(hours=24),
                 },
