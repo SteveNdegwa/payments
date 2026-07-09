@@ -30,6 +30,7 @@ def initiate_payment(
         currency=request.data.get("currency"),
         payment_method_token_id=request.data.get("payment_method_token_id"),
         payment_payload=request.data.get("payment_payload"),
+        external_reference=request.data.get("external_reference"),
         idempotency_key=request.data.get("idempotency_key"),
     )
 
