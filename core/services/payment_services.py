@@ -444,6 +444,7 @@ class PaymentServices:
     ) -> None:
         from core.services.executor import (
             ProviderResultStatus,
+            apply_next_action_from_result,
             intent_status_after_txn,
             txn_status_from_result,
         )
@@ -484,7 +485,8 @@ class PaymentServices:
             new_intent_status = intent_status_after_txn(pi, txn.transaction_type, new_txn_status)
             if new_intent_status:
                 pi.status = new_intent_status
-            pi.save(update_fields=["amount_authorized", "amount_captured", "status"])
+            apply_next_action_from_result(pi, result, new_intent_status)
+            pi.save(update_fields=["amount_authorized", "amount_captured", "next_action", "status"])
 
             ReconciliationRecord.objects.filter(transaction=txn).update(
                 status=ReconciliationRecord.Status.MATCHED,

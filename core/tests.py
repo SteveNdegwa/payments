@@ -22,9 +22,10 @@ from .models import (
     Transaction,
     WebhookDeliveryLog,
 )
-from .providers.base_provider import ProviderResultStatus
+from .providers.base_provider import ProviderResult, ProviderResultStatus
 from .providers.mpesa_daraja_provider import MpesaDarajaProvider
 from .services.executor import TransactionExecutor
+from .services.payment_services import PaymentServices
 
 
 class AdminDisplayFormattingTests(SimpleTestCase):
@@ -138,7 +139,7 @@ class MpesaDarajaProviderTests(SimpleTestCase):
 
 
 class TransactionExecutorFailureTests(TestCase):
-    def test_provider_load_error_marks_transaction_and_intent_failed(self):
+    def _create_payment_intent(self, *, class_name: str, next_action: dict | None = None):
         system = System.objects.create(
             name="Test System",
             slug="test-system",
@@ -151,7 +152,7 @@ class TransactionExecutorFailureTests(TestCase):
         provider = Provider.objects.create(
             name="Broken Provider",
             slug="broken-provider",
-            class_name="core.providers.missing.DoesNotExist",
+            class_name=class_name,
             payment_method_type=method_type,
         )
         provider_account = ProviderAccount.objects.create(
@@ -176,8 +177,15 @@ class TransactionExecutorFailureTests(TestCase):
             currency="KES",
             idempotency_key="intent-1",
             status=PaymentIntent.Status.INITIATED,
+            next_action=next_action,
         )
+        return intent
 
+    def test_provider_load_error_marks_transaction_and_intent_failed(self):
+        intent = self._create_payment_intent(
+            class_name="core.providers.missing.DoesNotExist",
+            next_action={"type": "mobile_money_stk_push"},
+        )
         txn = TransactionExecutor(
             payment_intent=intent,
             transaction_type=Transaction.Type.PAYMENT,
@@ -193,3 +201,37 @@ class TransactionExecutorFailureTests(TestCase):
         self.assertEqual(txn.status, Transaction.Status.FAILED)
         self.assertEqual(txn.failure_code, "internal_error")
         self.assertEqual(intent.status, PaymentIntent.Status.FAILED)
+        self.assertIsNone(intent.next_action)
+
+    def test_callback_failure_clears_existing_next_action(self):
+        intent = self._create_payment_intent(
+            class_name="core.providers.mpesa_daraja_provider.MpesaDarajaProvider",
+            next_action={"type": "mobile_money_stk_push"},
+        )
+        intent.status = PaymentIntent.Status.REQUIRES_ACTION
+        intent.save(update_fields=["status"])
+        txn = Transaction.objects.create(
+            payment_intent=intent,
+            transaction_type=Transaction.Type.PAYMENT,
+            provider=intent.chargeable_event.provider,
+            provider_account=intent.chargeable_event.provider_account,
+            amount=intent.amount,
+            currency=intent.currency,
+            provider_transaction_id="checkout-123",
+            status=Transaction.Status.REQUIRES_ACTION,
+        )
+
+        PaymentServices.apply_provider_result(
+            txn=txn,
+            result=ProviderResult(
+                status=ProviderResultStatus.FAILED,
+                failure_code="stk_cancelled",
+                failure_reason="Customer cancelled the STK push.",
+                raw_response={"ResultCode": "1032"},
+            ),
+            actor="webhook",
+        )
+
+        intent.refresh_from_db()
+        self.assertEqual(intent.status, PaymentIntent.Status.FAILED)
+        self.assertIsNone(intent.next_action)

@@ -67,6 +67,17 @@ def intent_status_after_txn(
     return None
 
 
+def apply_next_action_from_result(
+    intent: PaymentIntent,
+    result: ProviderResult,
+    new_intent_status: str | None,
+) -> None:
+    if result.next_action:
+        intent.next_action = result.next_action
+    elif new_intent_status and new_intent_status != PaymentIntent.Status.REQUIRES_ACTION:
+        intent.next_action = None
+
+
 class TransactionExecutor:
     def __init__(
         self,
@@ -232,13 +243,11 @@ class TransactionExecutor:
                 elif t in (Transaction.Type.REFUND, Transaction.Type.PARTIAL_REFUND):
                     pi.amount_refunded = (pi.amount_refunded or 0) + self.amount
 
-            if result.next_action:
-                pi.next_action = result.next_action
-
             # Derive intent status with freshly updated amounts
             new_intent_status = intent_status_after_txn(pi, self.transaction_type, new_txn_status)
             if new_intent_status:
                 pi.status = new_intent_status
+            apply_next_action_from_result(pi, result, new_intent_status)
 
             pi.save(
                 update_fields=[
