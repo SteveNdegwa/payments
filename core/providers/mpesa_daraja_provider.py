@@ -17,6 +17,14 @@ logger = logging.getLogger(__name__)
 
 @register_provider("core.providers.mpesa_daraja_provider.MpesaDarajaProvider")
 class MpesaDarajaProvider(BaseProvider):
+    @staticmethod
+    def _unsupported_operation(operation: str) -> ProviderResult:
+        return ProviderResult(
+            status=ProviderResultStatus.FAILED,
+            failure_code="unsupported_operation",
+            failure_reason=f"M-Pesa Daraja does not support {operation}.",
+        )
+
     def _validate_credentials(self) -> None:
         required_fields = {
             "consumer_key",
@@ -47,7 +55,7 @@ class MpesaDarajaProvider(BaseProvider):
     def headers(self) -> dict:
         return {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
 
-    def charge(self, amount: Decimal, currency: str, payload: dict) -> ProviderResult:
+    def charge(self, *, amount: Decimal, currency: str, payload: dict) -> ProviderResult:
         try:
             self._validate_credentials()
             check_required_fields(
@@ -101,6 +109,13 @@ class MpesaDarajaProvider(BaseProvider):
                 status=ProviderResultStatus.REQUIRES_ACTION,
                 provider_transaction_id=response_data.get("CheckoutRequestID"),
                 raw_response=response_data,
+                next_action={
+                    "type": "mobile_money_stk_push",
+                    "message": response_data.get(
+                        "CustomerMessage",
+                        "Enter your M-Pesa PIN on your phone to complete payment.",
+                    ),
+                },
             )
 
         except RequestException as exc:
@@ -122,6 +137,17 @@ class MpesaDarajaProvider(BaseProvider):
                 failure_reason=str(exc),
                 raw_response={},
             )
+
+    def authorize(self, *, amount: Decimal, currency: str, payload: dict) -> ProviderResult:
+        return self._unsupported_operation("authorization")
+
+    def capture(
+        self, *, provider_transaction_id: str, amount: Decimal, payload: dict
+    ) -> ProviderResult:
+        return self._unsupported_operation("capture")
+
+    def void(self, *, provider_transaction_id: str, payload: dict) -> ProviderResult:
+        return self._unsupported_operation("void")
 
     def refund(
         self,

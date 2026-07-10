@@ -89,9 +89,17 @@ class TransactionExecutor:
 
     def run(self) -> Transaction:
         txn = self._create_transaction()
-        provider = self._load_provider()
-        self._inject_callback_url(txn)
-        result = self._call_provider(provider, txn)
+        try:
+            provider = self._load_provider()
+            self._inject_callback_url(txn)
+            result = self._call_provider(provider, txn)
+        except Exception as exc:
+            logger.exception("Failed to prepare provider call for TXN-%s", txn.id)
+            result = ProviderResult(
+                status=ProviderResultStatus.FAILED,
+                failure_code="internal_error",
+                failure_reason=str(exc),
+            )
         txn = self._persist_result(txn, result)
         return txn
 
@@ -185,6 +193,8 @@ class TransactionExecutor:
         new_txn_status = txn_status_from_result(result)
 
         with db_transaction.atomic():
+            old_txn_status = txn.status
+
             # Update Transaction
             txn.status = new_txn_status
             txn.provider_transaction_id = result.provider_transaction_id
@@ -203,7 +213,7 @@ class TransactionExecutor:
             # Audit log
             TransactionStateLog.objects.create(
                 transaction=txn,
-                from_status=Transaction.Status.PROCESSING,
+                from_status=old_txn_status,
                 to_status=new_txn_status,
                 actor=self.actor,
                 reason=result.failure_reason or "Provider response received",
