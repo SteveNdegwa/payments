@@ -152,7 +152,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     "x-api-key",
 ]
 
-BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000/api/v1")
+BASE_URL = os.environ.get("BASE_URL", "https://stage-payments.spinmobile.co/api/v1")
 
 
 # Celery
