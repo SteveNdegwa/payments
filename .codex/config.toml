@@ -1,0 +1,8 @@
+# Codex CLI config for spin-payments. The canonical brief is AGENTS.md at the
+# repo root (Codex reads it natively). This file wires the shared MCP server; the
+# guardrail/format hooks live in .codex/hooks.json and reuse the same scripts as
+# Claude Code (.codex/hooks -> ../.claude/hooks).
+
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp@latest"]

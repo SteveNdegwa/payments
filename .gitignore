@@ -138,6 +138,12 @@ ehthumbs.db
 Desktop.ini
 
 # -----------------------------------------------------------------------------
-# Claude / local tooling
+# Agent tooling (Claude / Codex / …)
 # -----------------------------------------------------------------------------
+# Shared, tracked agent config lives in .claude/, .codex/, AGENTS.md, CLAUDE.md,
+# .agents/ and .mcp.json (see .claude/README.md). Only per-machine / per-session
+# bits are ignored:
 .claude/settings.local.json
+.claude/local/
+.claude/worktrees/
+.codex/config.local.toml
