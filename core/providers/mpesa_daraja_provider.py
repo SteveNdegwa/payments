@@ -111,10 +111,7 @@ class MpesaDarajaProvider(BaseProvider):
                 raw_response=response_data,
                 next_action={
                     "type": "mobile_money_stk_push",
-                    "message": response_data.get(
-                        "CustomerMessage",
-                        "Enter your M-Pesa PIN on your phone to complete payment.",
-                    ),
+                    "message": "Enter your M-Pesa PIN on your phone to complete payment.",
                 },
             )
 
