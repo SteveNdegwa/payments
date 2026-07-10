@@ -263,8 +263,24 @@ env:
 
 secretEnv:
   # Sourced from the payments-secrets external secret (Vault). Web, worker and
-  # beat pods all need the broker URL. Requires a `celery-broker-url` key at the
-  # dataKey path above.
+  # beat pods all need the broker URL and database credentials. Requires the
+  # following keys at the dataKey path above (prod/ke/payments-secrets):
+  #   celery-broker-url, db-password, db-host, db-port, db-name, db-user
   CELERY_BROKER_URL:
     name: payments-secrets
     key: celery-broker-url
+  DATABASE_PASSWORD:
+    name: payments-secrets
+    key: db-password
+  DATABASE_HOST:
+    name: payments-secrets
+    key: db-host
+  DATABASE_PORT:
+    name: payments-secrets
+    key: db-port
+  DATABASE_DB:
+    name: payments-secrets
+    key: db-name
+  DATABASE_USER:
+    name: payments-secrets
+    key: db-user

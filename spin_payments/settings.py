@@ -88,19 +88,32 @@ WSGI_APPLICATION = "spin_payments.wsgi.application"
 
 
 # Database
-# Defaults to sqlite for local dev. In containers, set POSTGRES_* (or DATABASE_URL-like vars)
-# to switch to Postgres.
+# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
+#
+# Postgres in every deployed environment: the DATABASE_* vars are supplied from
+# Vault via the helm chart (see helm/stage.yml, helm/prod.yml). Falls back to
+# sqlite for local dev / tests when DATABASE_DB is unset.
 
-if os.environ.get("POSTGRES_DB"):
+if os.environ.get("DATABASE_DB"):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.environ["POSTGRES_DB"],
-            "USER": os.environ.get("POSTGRES_USER", "postgres"),
-            "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
-            "HOST": os.environ.get("POSTGRES_HOST", "localhost"),
-            "PORT": os.environ.get("POSTGRES_PORT", "5432"),
-            "CONN_MAX_AGE": int(os.environ.get("POSTGRES_CONN_MAX_AGE", "60")),
+            "NAME": os.environ["DATABASE_DB"],
+            "USER": os.environ.get("DATABASE_USER", "postgres"),
+            "PASSWORD": os.environ.get("DATABASE_PASSWORD", ""),
+            "HOST": os.environ.get("DATABASE_HOST", "localhost"),
+            "PORT": os.environ.get("DATABASE_PORT", "5432"),
+            "CONN_MAX_AGE": int(os.environ.get("DATABASE_CONN_MAX_AGE", "60")),
+            "OPTIONS": {
+                "application_name": "payments-api",
+                "connect_timeout": 10,
+                "options": (
+                    "-c statement_timeout=300000 "
+                    "-c lock_timeout=75000 "
+                    "-c idle_in_transaction_session_timeout=60000 "
+                    "-c work_mem=32MB"
+                ),  # 5m query timeout, 75s lock timeout, 1m idle-in-transaction, 32MB work_mem
+            },
         }
     }
 else:
