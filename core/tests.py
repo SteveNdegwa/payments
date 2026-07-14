@@ -22,7 +22,7 @@ from .models import (
     Transaction,
     WebhookDeliveryLog,
 )
-from .providers.base_provider import ProviderResult, ProviderResultStatus
+from .providers.base_provider import BaseProvider, ProviderResult, ProviderResultStatus
 from .providers.mpesa_daraja_provider import MpesaDarajaProvider
 from .services.executor import TransactionExecutor
 from .services.payment_services import PaymentServices
@@ -74,6 +74,25 @@ class AdminDisplayFormattingTests(SimpleTestCase):
 
 
 class MpesaDarajaProviderTests(SimpleTestCase):
+    def test_base_provider_payment_operations_default_to_unsupported(self):
+        class CallbackOnlyProvider(BaseProvider):
+            def verify_callback(self, *, headers: dict, payload: dict) -> bool:
+                return False
+
+            def parse_callback(self, *, payload: dict) -> ProviderResult:
+                return ProviderResult(status=ProviderResultStatus.UNKNOWN)
+
+        provider = CallbackOnlyProvider(credentials={})
+
+        result = provider.refund(provider_transaction_id="txn-1", amount=Decimal("10"), payload={})
+
+        self.assertEqual(result.status, ProviderResultStatus.FAILED)
+        self.assertEqual(result.failure_code, "unsupported_operation")
+        self.assertEqual(
+            result.failure_reason,
+            "CallbackOnlyProvider does not support refund.",
+        )
+
     def test_card_only_flows_return_unsupported_operation_failure(self):
         provider = MpesaDarajaProvider(
             credentials={

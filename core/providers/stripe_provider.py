@@ -191,7 +191,7 @@ class StripeProvider(BaseProvider):
                 raw_response=exc.json_body or {},
             )
 
-    def query_status(self, *, provider_transaction_id: str) -> ProviderResult:
+    def query_status(self, *, provider_transaction_id: str, payload: dict) -> ProviderResult:
         try:
             intent = self._client.payment_intents.retrieve(provider_transaction_id)
             return _build_result(dict(intent))

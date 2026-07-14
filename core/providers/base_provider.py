@@ -34,41 +34,42 @@ class BaseProvider(ABC):
         self.credentials = credentials
         self.config = config or {}
 
+    def _unsupported_operation(self, operation: str) -> ProviderResult:
+        return ProviderResult(
+            status=ProviderResultStatus.FAILED,
+            failure_code="unsupported_operation",
+            failure_reason=f"{self.__class__.__name__} does not support {operation}.",
+        )
+
     # Core payment flows
-    @abstractmethod
     def charge(self, *, amount: Decimal, currency: str, payload: dict) -> ProviderResult:
         """Single-step charge (mobile money, wallets, etc.)."""
-        raise NotImplementedError
+        return self._unsupported_operation("charge")
 
-    @abstractmethod
     def authorize(self, *, amount: Decimal, currency: str, payload: dict) -> ProviderResult:
         """Auth-only (cards with authorize-capture flow)."""
-        raise NotImplementedError
+        return self._unsupported_operation("authorization")
 
-    @abstractmethod
     def capture(
         self, *, provider_transaction_id: str, amount: Decimal, payload: dict
     ) -> ProviderResult:
         """Capture a previously authorised amount."""
-        raise NotImplementedError
+        return self._unsupported_operation("capture")
 
-    @abstractmethod
     def void(self, *, provider_transaction_id: str, payload: dict) -> ProviderResult:
         """Void / reverse an authorisation before capture."""
-        raise NotImplementedError
+        return self._unsupported_operation("void")
 
-    @abstractmethod
     def refund(
         self, *, provider_transaction_id: str, amount: Decimal, payload: dict
     ) -> ProviderResult:
         """Full or partial refund on a captured transaction."""
-        raise NotImplementedError
+        return self._unsupported_operation("refund")
 
     # Reconciliation
-    @abstractmethod
     def query_status(self, *, provider_transaction_id: str, payload: dict) -> ProviderResult:
         """Poll provider for the current status of a transaction."""
-        raise NotImplementedError
+        return self._unsupported_operation("status query")
 
     # Webhook / callback verification
     @abstractmethod
