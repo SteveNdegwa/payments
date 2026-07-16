@@ -1,5 +1,5 @@
 """
-WSGI config for spin_payments project.
+WSGI config for payments project.
 
 It exposes the WSGI callable as a module-level variable named ``application``.
 
@@ -11,6 +11,6 @@ import os
 
 from django.core.wsgi import get_wsgi_application
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "spin_payments.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "payments.settings")
 
 application = get_wsgi_application()

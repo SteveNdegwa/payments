@@ -1,41 +1,42 @@
-# ---- builder -----------------------------------------------------------------
-FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim AS builder
-
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy \
-    UV_PROJECT_ENVIRONMENT=/usr/src/app/.venv
+FROM python:3.11-slim AS builder
 
 WORKDIR /usr/src/app
 
-# build-essential supplies cc/gcc/make for native wheels that have no cp314
-# wheel yet (kept for safety; psycopg2-binary ships its own wheels).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
+    build-essential \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml uv.lock ./
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+RUN python manage.py collectstatic --noinput --clear
 
 
-# ---- runtime -----------------------------------------------------------------
-FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
-
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PATH="/usr/src/app/.venv/bin:${PATH}"
+FROM python:3.11-slim
 
 WORKDIR /usr/src/app
 
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
 COPY --from=builder /usr/src/app /usr/src/app
 
-RUN mkdir -p /var/www/spin_payments
+COPY --from=builder /usr/src/app/staticfiles /usr/src/app/staticfiles
+
+RUN useradd -m -r appuser && \
+    chown -R appuser:appuser /usr/src/app && \
+    chmod -R 755 /usr/src/app/staticfiles
+
+USER appuser
 
 EXPOSE 8000
+
+CMD ["sh", "-c", "python manage.py migrate && \
+                  gunicorn payments.wsgi:application \
+                  --bind 0.0.0.0:8000 \
+                  --workers 1 \
+                  --timeout 120"]

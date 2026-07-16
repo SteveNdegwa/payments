@@ -1,5 +1,5 @@
 """
-Django settings for spin_payments project.
+Django settings for payments project.
 """
 
 import os
@@ -27,11 +27,11 @@ def _env_list(name, default=None, sep=","):
 ENV = os.environ.get("ENV", "local")
 
 SECRET_KEY = os.environ.get(
-    "SECRET_KEY",
+    "DJANGO_SECRET_KEY",
     "django-insecure-cogu1s%!x&tm+it74)6inzov0bg82lympp^6*kc0@+2rz8^v28",
 )
 
-DEBUG = _env_bool("DEBUG", default=True)
+DEBUG = _env_bool("DJANGO_DEBUG", default=True)
 
 ALLOWED_HOSTS = _env_list("ALLOWED_HOSTS", default=["*"])
 
@@ -66,7 +66,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = "spin_payments.urls"
+ROOT_URLCONF = "payments.urls"
 
 TEMPLATES = [
     {
@@ -84,7 +84,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "spin_payments.wsgi.application"
+WSGI_APPLICATION = "payments.wsgi.application"
 
 
 # Database
@@ -141,7 +141,7 @@ USE_TZ = True
 
 # Static files
 STATIC_URL = "static/"
-STATIC_ROOT = os.environ.get("APP_PATH", str(BASE_DIR / "staticfiles"))
+STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -152,7 +152,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     "x-api-key",
 ]
 
-BASE_URL = os.environ.get("BASE_URL", "https://stage-payments.spinmobile.co/api/v1")
+BASE_URL = os.environ.get("BASE_URL", "https://payments.lipasync.com/api/v1")
 
 
 # Celery

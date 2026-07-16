@@ -37,7 +37,7 @@ the Django admin at `/cia/`.
 ## Repo layout
 
 ```
-spin_payments/     Django project: settings.py, urls.py, celery.py, wsgi/asgi
+payments/     Django project: settings.py, urls.py, celery.py, wsgi/asgi
 core/              Payment domain — the heart of the service
   models.py          System, Provider, ProviderAccount, ChargeableEvent,
                      PaymentIntent, Transaction, TransactionStateLog,

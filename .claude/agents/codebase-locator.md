@@ -17,7 +17,7 @@ route tables, model/field headers, task decorators) — enough to locate, no mor
 
 ## How things are laid out
 
-**Project — `spin_payments/`**
+**Project — `payments/`**
 - `settings.py` — env-driven config (DB, Celery, CORS, `BASE_URL`, middleware order).
 - `urls.py` — root routes: `/healthz`, `/cia/` (admin), `/api/v1/` → `api.urls`.
 - `celery.py` — Celery app (`payments`), autodiscovers tasks, DB beat scheduler.
