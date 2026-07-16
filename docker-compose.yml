@@ -82,10 +82,23 @@ services:
       - backend
     restart: always
 
-  celery_worker:
+  celery_worker_high:
     image: *app-image
-    container_name: prod_payments_celery_worker
-    command: celery -A payments worker -l INFO
+    container_name: prod_payments_celery_worker_high
+    command: celery -A payments worker -Q payments.high -c 4 -l INFO
+    environment:
+      <<: *django-env
+    depends_on:
+      - payments
+      - rabbitmq
+    networks:
+      - backend
+    restart: always
+
+  celery_worker_low:
+    image: *app-image
+    container_name: prod_payments_celery_worker_low
+    command: celery -A payments worker -Q payments.low -c 2 -l INFO
     environment:
       <<: *django-env
     depends_on:
