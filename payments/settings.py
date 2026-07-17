@@ -156,7 +156,10 @@ BASE_URL = os.environ.get("BASE_URL", "https://payments.lipasync.com/api/v1")
 
 
 # Celery
-CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "amqp://guest:guest@localhost:5672//")
+CELERY_BROKER_URL = os.environ.get(
+    "CELERY_BROKER_URL",
+    "amqp://guest:guest@localhost:5672//",
+)
 CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND") or None
 CELERY_TASK_IGNORE_RESULT = True
 CELERY_TASK_SERIALIZER = "json"
