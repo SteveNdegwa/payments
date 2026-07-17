@@ -15,6 +15,10 @@ x-django-env: &django-env
 
 x-app-image: &app-image ${IMAGE_TAG}
 
+x-common-labels: &common-labels
+  observability.app: payments
+  observability.environment: ${SHARED_ENV}
+
 networks:
   default:
     name: ${SHARED_NETWORK}
@@ -23,16 +27,22 @@ networks:
 services:
   payments:
     image: *app-image
-    container_name: prod_payments_app
+    container_name: ${SHARED_ENV}_payments_app
+    labels:
+      <<: *common-labels
+      observability.component: api
     environment:
       <<: *django-env
     ports:
-      - "8014:8000"
+      - "${API_PORT}:8000"
     restart: always
 
   celery_worker_high:
     image: *app-image
-    container_name: prod_payments_celery_worker_high
+    container_name: ${SHARED_ENV}_payments_celery_worker_high
+    labels:
+      <<: *common-labels
+      observability.component: celery-worker-high
     command: celery -A payments worker -Q payments.high -c 4 -l INFO
     environment:
       <<: *django-env
@@ -40,7 +50,10 @@ services:
 
   celery_worker_low:
     image: *app-image
-    container_name: prod_payments_celery_worker_low
+    container_name: ${SHARED_ENV}_payments_celery_worker_low
+    labels:
+      <<: *common-labels
+      observability.component: celery-worker-low
     command: celery -A payments worker -Q payments.low -c 2 -l INFO
     environment:
       <<: *django-env
@@ -48,7 +61,10 @@ services:
 
   celery_beat:
     image: *app-image
-    container_name: prod_payments_celery_beat
+    container_name: ${SHARED_ENV}_payments_celery_beat
+    labels:
+      <<: *common-labels
+      observability.component: celery-beat
     command: celery -A payments beat -l INFO
     environment:
       <<: *django-env
