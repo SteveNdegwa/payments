@@ -1,111 +1,51 @@
 version: "3.9"
 
-x-postgres-env: &postgres-env
-  POSTGRES_USER: postgres
-  POSTGRES_DB: postgres
-  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-
-x-rabbitmq-env: &rabbitmq-env
-  RABBITMQ_DEFAULT_USER: payments
-  RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
-
 x-django-env: &django-env
   DJANGO_DEBUG: false
   DJANGO_SETTINGS_MODULE: payments.settings
   DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-  CELERY_BROKER_URL: amqp://payments:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672//
-  DATABASE_DB: postgres
-  DATABASE_USER: postgres
-  DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
-  DATABASE_HOST: prod_payments_postgres
-  DATABASE_PORT: 5432
+
+  DATABASE_DB: ${DATABASE_DB}
+  DATABASE_USER: ${DATABASE_USER}
+  DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+  DATABASE_HOST: ${DATABASE_HOST}
+  DATABASE_PORT: ${DATABASE_PORT}
+
+  CELERY_NAMESPACE: ${CELERY_NAMESPACE}
+  CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+  CELERY_TASK_DEFAULT_QUEUE: ${CELERY_NAMESPACE}.default
 
 x-app-image: &app-image ${IMAGE_TAG}
 
 networks:
-  backend:
-    driver: bridge
-
-volumes:
-  prod_payments_postgres_data:
-  prod_payments_rabbitmq_data:
+  default:
+    name: ${SHARED_NETWORK}
+    external: true
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: prod_payments_postgres
-    restart: always
-    environment:
-      <<: *postgres-env
-    volumes:
-      - prod_payments_postgres_data:/var/lib/postgresql/data
-    networks:
-      - backend
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres || exit 1" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-
-  rabbitmq:
-    image: rabbitmq:3.13-management-alpine
-    container_name: prod_payments_rabbitmq
-    restart: always
-    environment:
-      <<: *rabbitmq-env
-    ports:
-      - "15673:15672"
-    volumes:
-      - prod_payments_rabbitmq_data:/var/lib/rabbitmq
-    networks:
-      - backend
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   payments:
     image: *app-image
     container_name: prod_payments_app
     environment:
       <<: *django-env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
     ports:
       - "8014:8000"
-    networks:
-      - backend
     restart: always
 
   celery_worker_high:
     image: *app-image
     container_name: prod_payments_celery_worker_high
-    command: celery -A payments worker -Q payments.high -c 4 -l INFO
+    command: celery -A payments worker -Q ${CELERY_NAMESPACE}.high -c 4 -l INFO
     environment:
       <<: *django-env
-    depends_on:
-      - payments
-      - rabbitmq
-    networks:
-      - backend
     restart: always
 
   celery_worker_low:
     image: *app-image
     container_name: prod_payments_celery_worker_low
-    command: celery -A payments worker -Q payments.low -c 2 -l INFO
+    command: celery -A payments worker -Q ${CELERY_NAMESPACE}.low -c 2 -l INFO
     environment:
       <<: *django-env
-    depends_on:
-      - payments
-      - rabbitmq
-    networks:
-      - backend
     restart: always
 
   celery_beat:
@@ -114,22 +54,4 @@ services:
     command: celery -A payments beat -l INFO
     environment:
       <<: *django-env
-    depends_on:
-      - payments
-      - rabbitmq
-    networks:
-      - backend
     restart: always
-
-  flower:
-    image: mher/flower:2.0
-    container_name: prod_payments_flower
-    restart: always
-    environment:
-      <<: *django-env
-    ports:
-      - "5556:5555"
-    networks:
-      - backend
-    depends_on:
-      - rabbitmq

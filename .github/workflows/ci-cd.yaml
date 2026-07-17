@@ -90,9 +90,7 @@ jobs:
         id: prepare_secrets
         run: |
           declare -A secrets=(
-            [POSTGRES_PASSWORD]="${{ secrets.POSTGRES_PASSWORD }}"
             [DJANGO_SECRET_KEY]="${{ secrets.DJANGO_SECRET_KEY }}"
-            [RABBITMQ_DEFAULT_PASS]="${{ secrets.RABBITMQ_DEFAULT_PASS }}"
           )
 
           json="{}"
