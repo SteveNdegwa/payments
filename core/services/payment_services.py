@@ -458,6 +458,9 @@ class PaymentServices:
 
         with db_transaction.atomic():
             txn.status = new_txn_status
+            txn.provider_transaction_id = (
+                result.provider_transaction_id or txn.provider_transaction_id
+            )
             txn.provider_reference = result.provider_reference or txn.provider_reference
             txn.response_payload = {**txn.response_payload, response_key: result.raw_response}
             txn.failure_code = result.failure_code
