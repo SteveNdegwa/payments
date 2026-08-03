@@ -219,7 +219,9 @@ class OutboundTransferService:
         )
         payload = {
             **transfer.provider_payload,
-            "external_reference": transfer.external_reference,
+            # Provider-facing correlation uses the gateway transfer ID. The
+            # caller's external reference remains stored on the transfer.
+            "external_reference": str(transfer.id),
             "idempotency_key": transfer.idempotency_key,
             "callback_url": cls._callback_url(transfer),
         }
