@@ -35,6 +35,16 @@ DEBUG = _env_bool("DJANGO_DEBUG", default=True)
 
 ALLOWED_HOSTS = _env_list("ALLOWED_HOSTS", default=["*"])
 
+# TLS terminates at the reverse proxy in deployed environments. Trust the
+# proxy's protocol header so Django builds the correct HTTPS origin during
+# admin CSRF validation.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = _env_bool("USE_X_FORWARDED_HOST", default=True)
+CSRF_TRUSTED_ORIGINS = _env_list(
+    "CSRF_TRUSTED_ORIGINS",
+    default=["https://payments.lipasync.com"],
+)
+
 
 # Application definition
 
