@@ -690,12 +690,13 @@ class InboundPaymentService:
             "amount": str(inbound_payment.amount),
             "currency": inbound_payment.currency,
             "metadata": inbound_payment.metadata or {},
-            "external_reference": (
-                inbound_payment.external_reference or inbound_payment.idempotency_key
-            ),
-            "idempotency_key": inbound_payment.idempotency_key,
             **extra,
             **(inbound_payment.provider_payload or {}),
+            # Provider-facing correlation must use the gateway's immutable ID.
+            # The caller's external reference remains on InboundPayment for
+            # client-facing reconciliation and webhook delivery.
+            "external_reference": str(inbound_payment.id),
+            "idempotency_key": inbound_payment.idempotency_key,
         }
         # If a stored token exists and payment_method hasn't been set, use it
         if token and "payment_method" not in payload:
@@ -733,6 +734,7 @@ class InboundPaymentService:
                 "amount_authorized": str(inbound_payment.amount_authorized),
                 "amount_captured": str(inbound_payment.amount_captured),
                 "amount_refunded": str(inbound_payment.amount_refunded),
+                "external_reference": inbound_payment.external_reference,
                 "next_action": inbound_payment.next_action,
                 "metadata": inbound_payment.metadata,
             },
