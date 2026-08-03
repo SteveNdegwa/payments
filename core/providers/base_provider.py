@@ -27,12 +27,22 @@ class ProviderResult:
     next_action: dict | None = None
     # Amount actually processed (for partial captures, etc.)
     amount_processed: Decimal | None = None
+    # Optional provider-wallet snapshot. This is operational data, not ledger balance.
+    account_balance: Decimal | None = None
+    account_balance_currency: str = ""
+
+
+@dataclass
+class ProviderBalance:
+    amount: Decimal
+    currency: str
 
 
 class BaseProvider(ABC):
-    def __init__(self, credentials: dict, config: dict | None = None):
-        self.credentials = credentials
-        self.config = config or {}
+    callback_verification_supported = False
+
+    def __init__(self, config: dict):
+        self.config = config
 
     def _unsupported_operation(self, operation: str) -> ProviderResult:
         return ProviderResult(
@@ -41,9 +51,9 @@ class BaseProvider(ABC):
             failure_reason=f"{self.__class__.__name__} does not support {operation}.",
         )
 
-    # Core payment flows
+    # Inbound payment operations
     def charge(self, *, amount: Decimal, currency: str, payload: dict) -> ProviderResult:
-        """Single-step charge (mobile money, wallets, etc.)."""
+        """Collect an inbound payment in one provider operation."""
         return self._unsupported_operation("charge")
 
     def authorize(self, *, amount: Decimal, currency: str, payload: dict) -> ProviderResult:
@@ -66,10 +76,26 @@ class BaseProvider(ABC):
         """Full or partial refund on a captured transaction."""
         return self._unsupported_operation("refund")
 
+    def transfer(
+        self,
+        *,
+        recipient_type: str,
+        payment_method_code: str,
+        amount: Decimal,
+        currency: str,
+        payload: dict,
+    ) -> ProviderResult:
+        """Send an outbound B2C or B2B transfer over the selected payment rail."""
+        return self._unsupported_operation(f"{recipient_type} {payment_method_code} transfer")
+
     # Reconciliation
     def query_status(self, *, provider_transaction_id: str, payload: dict) -> ProviderResult:
         """Poll provider for the current status of a transaction."""
         return self._unsupported_operation("status query")
+
+    def query_balance(self) -> ProviderBalance | None:
+        """Return an operational provider-wallet snapshot when supported."""
+        return None
 
     # Webhook / callback verification
     @abstractmethod

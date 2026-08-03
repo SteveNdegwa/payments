@@ -33,7 +33,8 @@ class GatewayControlMiddleware:
         "/media",
         "/__debug__",
         "/favicon.ico",
-        "/api/v1/core/payments/callbacks",
+        "/api/v1/core/inbound-payments/callbacks",
+        "/api/v1/core/outbound-transfers/callbacks",
     ]
 
     SAVE_REQUEST_LOG_EXEMPT_PATHS = ["/health", "/favicon.ico"]

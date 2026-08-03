@@ -13,9 +13,7 @@ def register_provider(class_name: str):
     return decorator
 
 
-def get_provider_instance(
-    class_name: str, credentials: dict, config: dict | None = None
-) -> BaseProvider:
+def get_provider_instance(class_name: str, config: dict) -> BaseProvider:
     if class_name not in _REGISTRY:
         module_path, _, klass = class_name.rpartition(".")
         try:
@@ -25,4 +23,4 @@ def get_provider_instance(
         except (ImportError, AttributeError) as exc:
             raise ValueError(f"Provider '{class_name}' could not be loaded: {exc}") from exc
 
-    return _REGISTRY[class_name](credentials=credentials, config=config)
+    return _REGISTRY[class_name](config=config)

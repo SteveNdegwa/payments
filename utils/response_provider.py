@@ -2,7 +2,7 @@ from django.core.exceptions import ObjectDoesNotExist, PermissionDenied, Validat
 from django.core.serializers.json import DjangoJSONEncoder
 from django.http import JsonResponse
 
-from core.services.payment_services import PaymentError
+from core.services.exceptions import InboundPaymentError, OutboundTransferError
 
 
 class ResponseProvider:
@@ -21,8 +21,10 @@ class ResponseProvider:
         if isinstance(ex, ValidationError):
             error_message = ", ".join(ex.messages) if hasattr(ex, "messages") else str(ex)
             return cls.bad_request(message="Validation Error", error=error_message)
-        elif isinstance(ex, PaymentError):
-            return cls.bad_request(message="Payment Error", error=str(ex))
+        elif isinstance(ex, InboundPaymentError):
+            return cls.bad_request(message="Inbound Payment Error", error=str(ex))
+        elif isinstance(ex, OutboundTransferError):
+            return cls.bad_request(message="Outbound Transfer Error", error=str(ex))
         elif isinstance(ex, ObjectDoesNotExist):
             return cls.not_found(error=str(ex))
         elif isinstance(ex, PermissionDenied):

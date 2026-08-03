@@ -1,14 +1,20 @@
 import base64
+import ipaddress
 import logging
 from datetime import datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import requests
 from django.core.exceptions import ValidationError
 from requests import RequestException
 from requests.auth import HTTPBasicAuth
 
-from core.providers.base_provider import BaseProvider, ProviderResult, ProviderResultStatus
+from core.providers.base_provider import (
+    BaseProvider,
+    ProviderResult,
+    ProviderResultStatus,
+)
 from core.services.registry import register_provider
 from utils.common import check_required_fields
 
@@ -17,80 +23,90 @@ logger = logging.getLogger(__name__)
 
 @register_provider("core.providers.mpesa_daraja_provider.MpesaDarajaProvider")
 class MpesaDarajaProvider(BaseProvider):
-    DARAJA_FLOW_STK_PUSH = "stk_push"
-    DARAJA_FLOW_B2B_PAYBILL = "b2b_paybill"
+    callback_verification_supported = True
 
-    def _validate_credentials(self) -> None:
+    def _validate_config(self) -> None:
         required_fields = {
             "consumer_key",
             "consumer_secret",
-            "base_url",
         }
-        self._raise_for_missing_credentials(required_fields)
+        self._raise_for_missing_config(required_fields)
 
-    def _validate_stk_push_credentials(self) -> None:
+    def _validate_stk_push_config(self) -> None:
         required_fields = {
             "consumer_key",
             "consumer_secret",
             "business_shortcode",
             "business_passkey",
-            "base_url",
         }
-        self._raise_for_missing_credentials(required_fields)
+        self._raise_for_missing_config(required_fields)
 
-    def _validate_b2b_credentials(self) -> None:
+    def _validate_b2b_config(self) -> None:
         required_fields = {
             "consumer_key",
             "consumer_secret",
             "business_shortcode",
-            "base_url",
             "initiator_name",
             "security_credential",
         }
-        self._raise_for_missing_credentials(required_fields)
+        self._raise_for_missing_config(required_fields)
 
-    def _raise_for_missing_credentials(self, required_fields: set[str]) -> None:
-        missing_fields = [field for field in required_fields if not self.credentials.get(field)]
+    def _raise_for_missing_config(self, required_fields: set[str]) -> None:
+        missing_fields = [field for field in required_fields if not self.config.get(field)]
         if missing_fields:
             raise ValidationError(
                 f"Daraja config missing required fields: {', '.join(missing_fields)}"
             )
 
     @property
+    def base_url(self) -> str:
+        base_url = self.config.get("base_url", "")
+        if not base_url:
+            raise ValidationError("Daraja config missing required field: base_url")
+        return base_url.rstrip("/")
+
+    @property
     def token(self) -> str:
-        base_url = self.credentials.get("base_url")
-        url = f"{base_url}/oauth/v1/generate?grant_type=client_credentials"
-        consumer_key = self.credentials.get("consumer_key")
-        consumer_secret = self.credentials.get("consumer_secret")
+        self._validate_config()
+        url = f"{self.base_url}/oauth/v1/generate?grant_type=client_credentials"
+        consumer_key = self.config.get("consumer_key")
+        consumer_secret = self.config.get("consumer_secret")
         response = requests.get(url, auth=HTTPBasicAuth(consumer_key, consumer_secret))
         response.raise_for_status()
         return response.json()["access_token"]
 
     @property
     def headers(self) -> dict:
-        return {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
+        return {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+        }
 
     def charge(self, *, amount: Decimal, currency: str, payload: dict) -> ProviderResult:
-        daraja_flow = payload.get(
-            "daraja_flow",
-            self.config.get("default_daraja_flow", self.DARAJA_FLOW_STK_PUSH),
-        )
+        return self._stk_push(amount=amount, payload=payload)
 
-        if daraja_flow == self.DARAJA_FLOW_B2B_PAYBILL:
-            return self._paybill_to_paybill(amount=amount, payload=payload)
-
-        if daraja_flow not in ("", self.DARAJA_FLOW_STK_PUSH):
+    def transfer(
+        self,
+        *,
+        recipient_type: str,
+        payment_method_code: str,
+        amount: Decimal,
+        currency: str,
+        payload: dict,
+    ) -> ProviderResult:
+        if recipient_type != "B2B" or payment_method_code != "MOBILE_MONEY":
+            return self._unsupported_operation(f"{recipient_type} {payment_method_code} transfer")
+        if currency.upper() != "KES":
             return ProviderResult(
                 status=ProviderResultStatus.FAILED,
-                failure_code="unsupported_daraja_flow",
-                failure_reason=f"Unsupported Daraja flow: {daraja_flow}",
+                failure_code="unsupported_currency",
+                failure_reason="Daraja Kenya B2B transfers require KES.",
             )
-
-        return self._stk_push(amount=amount, payload=payload)
+        return self._paybill_to_paybill(amount=amount, payload=payload)
 
     def _stk_push(self, *, amount: Decimal, payload: dict) -> ProviderResult:
         try:
-            self._validate_stk_push_credentials()
+            self._validate_stk_push_config()
             check_required_fields(
                 payload=payload,
                 required_fields={
@@ -100,11 +116,10 @@ class MpesaDarajaProvider(BaseProvider):
                 },
             )
 
-            shortcode = self.credentials["business_shortcode"]
-            passkey = self.credentials["business_passkey"]
-            base_url = self.credentials["base_url"]
+            shortcode = self.config["business_shortcode"]
+            passkey = self.config["business_passkey"]
 
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            timestamp = datetime.now(ZoneInfo("Africa/Nairobi")).strftime("%Y%m%d%H%M%S")
             password = base64.b64encode(f"{shortcode}{passkey}{timestamp}".encode()).decode()
 
             phone_number = payload["phone_number"]
@@ -126,7 +141,7 @@ class MpesaDarajaProvider(BaseProvider):
                 "TransactionDesc": transaction_desc,
             }
 
-            url = f"{base_url.rstrip('/')}/mpesa/stkpush/v1/processrequest"
+            url = f"{self.base_url}/mpesa/stkpush/v1/processrequest"
 
             response = requests.post(
                 url,
@@ -152,17 +167,17 @@ class MpesaDarajaProvider(BaseProvider):
             )
 
         except RequestException as exc:
-            logger.exception(f"MpesaDarajaProvider HTTP error during charge: {exc}")
+            logger.exception("MpesaDarajaProvider HTTP error during charge")
 
             return ProviderResult(
                 status=ProviderResultStatus.FAILED,
                 failure_code="http_error",
                 failure_reason=str(exc),
-                raw_response=getattr(exc.response, "json", lambda: {})(),
+                raw_response=getattr(exc.response, "json", dict)(),
             )
 
         except Exception as exc:
-            logger.exception(f"MpesaDarajaProvider charge exception: {exc}")
+            logger.exception("MpesaDarajaProvider charge exception")
 
             return ProviderResult(
                 status=ProviderResultStatus.FAILED,
@@ -173,7 +188,7 @@ class MpesaDarajaProvider(BaseProvider):
 
     def _paybill_to_paybill(self, *, amount: Decimal, payload: dict) -> ProviderResult:
         try:
-            self._validate_b2b_credentials()
+            self._validate_b2b_config()
             check_required_fields(
                 payload=payload,
                 required_fields={
@@ -183,10 +198,9 @@ class MpesaDarajaProvider(BaseProvider):
                 },
             )
 
-            shortcode = self.credentials["business_shortcode"]
-            base_url = self.credentials["base_url"]
-            initiator = self.credentials["initiator_name"]
-            security_credential = self.credentials["security_credential"]
+            shortcode = self.config["business_shortcode"]
+            initiator = self.config["initiator_name"]
+            security_credential = self.config["security_credential"]
 
             callback_url = payload["callback_url"]
             request_payload = {
@@ -204,7 +218,7 @@ class MpesaDarajaProvider(BaseProvider):
                 "ResultURL": callback_url,
             }
 
-            url = f"{base_url.rstrip('/')}/mpesa/b2b/v1/paymentrequest"
+            url = f"{self.base_url}/mpesa/b2b/v1/paymentrequest"
 
             response = requests.post(
                 url,
@@ -233,17 +247,17 @@ class MpesaDarajaProvider(BaseProvider):
             )
 
         except RequestException as exc:
-            logger.exception(f"MpesaDarajaProvider HTTP error during b2b paybill: {exc}")
+            logger.exception("MpesaDarajaProvider HTTP error during b2b paybill")
 
             return ProviderResult(
-                status=ProviderResultStatus.FAILED,
+                status=ProviderResultStatus.UNKNOWN,
                 failure_code="http_error",
                 failure_reason=str(exc),
-                raw_response=getattr(exc.response, "json", lambda: {})(),
+                raw_response=getattr(exc.response, "json", dict)(),
             )
 
         except Exception as exc:
-            logger.exception(f"MpesaDarajaProvider b2b paybill exception: {exc}")
+            logger.exception("MpesaDarajaProvider b2b paybill exception")
 
             return ProviderResult(
                 status=ProviderResultStatus.FAILED,
@@ -260,10 +274,9 @@ class MpesaDarajaProvider(BaseProvider):
         payload: dict,
     ) -> ProviderResult:
         try:
-            shortcode = self.credentials["business_shortcode"]
-            base_url = self.credentials["base_url"]
-            initiator = self.credentials["initiator_name"]
-            security_credential = self.credentials["security_credential"]
+            shortcode = self.config["business_shortcode"]
+            initiator = self.config["initiator_name"]
+            security_credential = self.config["security_credential"]
 
             request_payload = {
                 "Initiator": initiator,
@@ -279,7 +292,7 @@ class MpesaDarajaProvider(BaseProvider):
                 "Occasion": payload.get("occasion", ""),
             }
 
-            url = f"{base_url.rstrip('/')}/mpesa/reversal/v1/request"
+            url = f"{self.base_url}/mpesa/reversal/v1/request"
 
             response = requests.post(
                 url,
@@ -308,7 +321,7 @@ class MpesaDarajaProvider(BaseProvider):
             )
 
         except RequestException as exc:
-            logger.exception(f"MpesaDarajaProvider HTTP error during refund: {exc}")
+            logger.exception("MpesaDarajaProvider HTTP error during refund")
             return ProviderResult(
                 status=ProviderResultStatus.FAILED,
                 failure_code="http_error",
@@ -318,11 +331,10 @@ class MpesaDarajaProvider(BaseProvider):
 
     def query_status(self, *, provider_transaction_id: str, payload: dict) -> ProviderResult:
         try:
-            shortcode = self.credentials["business_shortcode"]
-            base_url = self.credentials["base_url"]
+            shortcode = self.config["business_shortcode"]
 
-            initiator = self.credentials.get("initiator_name")
-            security_credential = self.credentials.get("security_credential")
+            initiator = self.config.get("initiator_name")
+            security_credential = self.config.get("security_credential")
 
             payload = {
                 "Initiator": initiator,
@@ -337,7 +349,7 @@ class MpesaDarajaProvider(BaseProvider):
                 "Occasion": "",
             }
 
-            url = f"{base_url.rstrip('/')}/mpesa/transactionstatus/v1/query"
+            url = f"{self.base_url}/mpesa/transactionstatus/v1/query"
 
             response = requests.post(
                 url,
@@ -368,18 +380,18 @@ class MpesaDarajaProvider(BaseProvider):
             )
 
         except RequestException as exc:
-            logger.exception(f"MpesaDarajaProvider HTTP error during query_status: {exc}")
+            logger.exception("MpesaDarajaProvider HTTP error during query_status")
 
             return ProviderResult(
                 status=ProviderResultStatus.FAILED,
                 provider_transaction_id=provider_transaction_id,
                 failure_code="http_error",
                 failure_reason=str(exc),
-                raw_response=getattr(exc.response, "json", lambda: {})(),
+                raw_response=getattr(exc.response, "json", dict)(),
             )
 
         except Exception as exc:
-            logger.exception(f"MpesaDarajaProvider query_status exception: {exc}")
+            logger.exception("MpesaDarajaProvider query_status exception")
 
             return ProviderResult(
                 status=ProviderResultStatus.FAILED,
@@ -390,7 +402,18 @@ class MpesaDarajaProvider(BaseProvider):
             )
 
     def verify_callback(self, *, headers: dict, payload: dict) -> bool:
-        return True
+        source_ip = payload.get("_source_ip")
+        allowed_networks = self.config.get("callback_allowed_ips", [])
+        if not source_ip or not allowed_networks:
+            return False
+        try:
+            address = ipaddress.ip_address(source_ip)
+            return any(
+                address in ipaddress.ip_network(network, strict=False)
+                for network in allowed_networks
+            )
+        except ValueError:
+            return False
 
     @staticmethod
     def _result_parameter(result: dict, key: str) -> str:
@@ -403,6 +426,9 @@ class MpesaDarajaProvider(BaseProvider):
         return ""
 
     def parse_callback(self, *, payload: dict) -> ProviderResult:
+        payload = {
+            key: value for key, value in payload.items() if key not in {"_raw_body", "_source_ip"}
+        }
         # STK PUSH CALLBACK
         if "Body" in payload and "stkCallback" in payload["Body"]:
             stk = payload["Body"]["stkCallback"]

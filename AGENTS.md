@@ -8,11 +8,14 @@ tree**; `CLAUDE.md` symlinks to it so every tool reads the same brief.
 
 **spin-payments** is a Django payments-orchestration service: a single gateway
 that fronts multiple payment providers (Stripe, M-Pesa Daraja, …) behind one
-API-key-authenticated HTTP API. External **systems** initiate payments against
-**chargeable events**; the service routes each to the right **provider account**,
-records a **PaymentIntent** → **Transaction** lifecycle with a double-entry
-ledger, runs provider calls **asynchronously via Celery**, **reconciles** pending
-transactions, and **delivers signed webhooks** back to the calling system.
+API-key-authenticated HTTP API. External **systems** initiate inbound payments
+against **inbound payment events** or create separate **outbound transfers**. The
+service routes each to the right **provider account**, records an
+**InboundPayment** → **InboundPaymentTransaction** lifecycle for collections and
+an **OutboundTransferEvent** → **OutboundTransfer** lifecycle for payouts, posts
+double-entry ledger entries,
+runs provider calls **asynchronously via Celery**, **reconciles** pending money
+movement, and **delivers signed webhooks** back to the calling system.
 
 It is a backend service only — no user-facing web UI. The only HTML surface is
 the Django admin at `/cia/`.
@@ -39,17 +42,18 @@ the Django admin at `/cia/`.
 ```
 payments/     Django project: settings.py, urls.py, celery.py, wsgi/asgi
 core/              Payment domain — the heart of the service
-  models.py          System, Provider, ProviderAccount, ChargeableEvent,
-                     PaymentIntent, Transaction, TransactionStateLog,
+  models.py          System, Provider, ProviderAccount, InboundPaymentEvent,
+                     InboundPayment, InboundPaymentTransaction,
+                     OutboundTransferEvent, OutboundTransfer,
                      LedgerAccount, LedgerPosting, WebhookOutbox,
-                     ProviderCallbackLog, ReconciliationRecord, …
-  views.py           initiate / capture / void / refund / provider_callback
+                     InboundPaymentCallbackLog, InboundPaymentReconciliation, …
+  views.py           inbound payment and outbound transfer API endpoints
   urls.py            routes under /api/v1/core/…
   providers/         BaseProvider ABC + stripe / mpesa_daraja implementations
-  services/          registry (provider lookup), executor (result→status),
-                     payment_services (PaymentServices facade)
-  tasks.py           Celery tasks (charge/authorize/capture/void/refund,
-                     reconcile, webhook delivery, periodic scans)
+  services/          registry (provider lookup), inbound payment executor/service,
+                     outbound transfer service
+  tasks.py           Celery tasks (collect/authorize/capture/void/refund/transfer,
+                     reconcile, balance refresh, webhook delivery, periodic scans)
 api/               HTTP gateway: GatewayControlMiddleware + rate-limit models
   middleware/gateway.py  API-key auth, IP allowlist, rate limiting, req logging
   models.py          RateLimitRule / RateLimitAttempt / RateLimitBlock
@@ -109,21 +113,23 @@ management UI and Postgres are exposed on the usual ports by `docker compose`.
 
 2. **Views (`core/views.py`).** Thin function views (`@require_http_methods`).
    They read the parsed body via `request.data` (set by the middleware), delegate
-   to **`PaymentServices`**, and return through **`ResponseProvider`** (a uniform
-   `{success, message, data}` JSON envelope). Views do **not** call providers
-   directly — they **queue Celery tasks** (`queue_capture`, etc.).
+   to **`InboundPaymentService`** or **`OutboundTransferService`**, and return
+   through **`ResponseProvider`** (a uniform `{success, message, data}` JSON
+   envelope). Views do **not** call providers directly — they **queue Celery
+   tasks** (`queue_capture`, etc.).
 
-3. **Services + providers.** `PaymentServices` (`core/services/payment_services.py`)
-   is the facade for all money movement. Provider integrations subclass
+3. **Services + providers.** `InboundPaymentService` and
+   `OutboundTransferService` are direction-specific money-movement facades.
+   Provider integrations subclass
    **`BaseProvider`** (`core/providers/base_provider.py`) and are looked up through
-   the **registry** (`get_provider_instance(class_name, credentials, config)`);
-   every provider call returns a **`ProviderResult`** which `executor.py` maps onto
-   `Transaction` / `PaymentIntent` statuses.
+   the **registry** (`get_provider_instance(class_name, config)`); every provider
+   call returns a **`ProviderResult`** which the relevant service/executor maps
+   onto `InboundPaymentTransaction`, `InboundPayment`, or `OutboundTransfer` status.
 
 4. **Async (`core/tasks.py`).** Provider I/O runs in Celery tasks on
    `payments.high`; reconciliation, webhook delivery, and periodic scans run on
    `payments.low`. Tasks are idempotent and carry retry/backoff policies.
-   Inbound provider **callbacks** are persisted as `ProviderCallbackLog` and
+   Inbound provider **callbacks** are persisted as `InboundPaymentCallbackLog` and
    processed by a task. Outbound **webhooks** go through a `WebhookOutbox` with
    HMAC-signed payloads and exponential backoff.
 
@@ -184,23 +190,26 @@ hooks + MCP wiring for the Codex CLI.
 
 ## Things easy to get wrong (payments invariants)
 
-- **Money movement is idempotent.** `PaymentIntent`/`Transaction` carry an
-  `idempotency_key`; re-initiating with the same key must not double-charge.
+- **Money movement is idempotent.** `InboundPayment` and `OutboundTransfer` carry
+  an `idempotency_key`; re-initiating with the same key must not move money twice.
+  Outbound callers select an `OutboundTransferEvent` slug; provider routing,
+  recipient type, payment method, and currency come from that event and cannot be
+  overridden in the request.
   Provider calls run in Celery tasks that can retry — a retried task must not
   create a second charge. Guard new flows with the key + the transaction state
   machine, never by "checking if it looks done".
 - **Never call a provider from a view.** Views validate + queue; the Celery task
-  (via `PaymentServices`) does the I/O and writes the `Transaction`. Keep request
-  latency off the provider's network path.
+  (via the direction-specific service) does the I/O and writes the money-movement
+  record. Keep request latency off the provider's network path.
 - **Status transitions go through the executor/state machine.** Map a
-  `ProviderResult` onto `Transaction`/`PaymentIntent` status via `executor.py`
-  (`txn_status_from_result`, `intent_status_after_txn`) and record a
-  `TransactionStateLog`. Don't set `status = "SUCCESS"` ad hoc.
+  `ProviderResult` onto the directional model status through
+  `inbound_payment_executor.py` or `OutboundTransferService` and record a
+  directional state log. Don't set `status = "SUCCESS"` ad hoc.
 - **The ledger is double-entry.** Balance changes are `LedgerPosting`s against
   `LedgerAccount`s. Don't invent a shortcut "balance" field on another model.
 - **Callbacks are untrusted.** Verify every inbound provider callback
   (`BaseProvider.verify_callback`) before acting on it; persist it as
-  `ProviderCallbackLog` and process asynchronously and idempotently.
+  the relevant directional callback log and process asynchronously and idempotently.
 - **Outbound webhooks are signed + retried.** Enqueue via `WebhookOutbox`
   (HMAC-SHA256 with `System.webhook_secret`, exponential backoff) — never fire a
   bare `requests.post` to a system's `webhook_url` inline.
