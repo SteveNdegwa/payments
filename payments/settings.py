@@ -167,3 +167,21 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_ACKS_LATE = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_TRACK_STARTED = True
+CELERY_BEAT_SCHEDULE = {
+    "scan-overdue-inbound-payment-transactions": {
+        "task": "payments.scan_overdue_inbound_payment_transactions",
+        "schedule": 60.0,
+    },
+    "scan-overdue-outbound-transfers": {
+        "task": "payments.scan_overdue_outbound_transfers",
+        "schedule": 60.0,
+    },
+    "expire-stale-inbound-payments": {
+        "task": "payments.expire_stale_inbound_payments",
+        "schedule": 300.0,
+    },
+    "scan-failed-webhooks": {
+        "task": "payments.scan_failed_webhooks",
+        "schedule": 60.0,
+    },
+}

@@ -3,7 +3,11 @@ from decimal import Decimal
 
 import stripe
 
-from core.providers.base_provider import BaseProvider, ProviderResult, ProviderResultStatus
+from core.providers.base_provider import (
+    BaseProvider,
+    ProviderResult,
+    ProviderResultStatus,
+)
 from core.services.registry import register_provider
 
 logger = logging.getLogger(__name__)
@@ -69,9 +73,11 @@ def _build_result(intent: dict) -> ProviderResult:
 
 @register_provider("core.providers.stripe_provider.StripeProvider")
 class StripeProvider(BaseProvider):
-    def __init__(self, credentials: dict, config: dict | None = None):
-        super().__init__(credentials, config)
-        self._client = stripe.StripeClient(api_key=credentials["secret_key"])
+    callback_verification_supported = True
+
+    def __init__(self, config: dict):
+        super().__init__(config)
+        self._client = stripe.StripeClient(api_key=config["secret_key"])
 
     @staticmethod
     def _amount_int(amount: Decimal, currency: str) -> int:
@@ -204,7 +210,7 @@ class StripeProvider(BaseProvider):
 
     def verify_callback(self, *, headers: dict, payload: dict) -> bool:
         sig_header = headers.get("stripe-signature", "")
-        webhook_secret = self.credentials.get("webhook_secret", "")
+        webhook_secret = self.config.get("webhook_secret", "")
         if not sig_header or not webhook_secret:
             return False
         try:

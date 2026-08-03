@@ -1,5 +1,6 @@
 import hashlib
 
+from django import forms
 from django.contrib import admin, messages
 from django.urls import reverse
 from django.utils import timezone
@@ -7,19 +8,24 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
 from .models import (
-    ChargeableEvent,
+    InboundPayment,
+    InboundPaymentCallbackLog,
+    InboundPaymentEvent,
+    InboundPaymentMethodToken,
+    InboundPaymentReconciliation,
+    InboundPaymentTransaction,
+    InboundPaymentTransactionStateLog,
     LedgerAccount,
     LedgerPosting,
-    PaymentIntent,
-    PaymentMethodToken,
+    OutboundTransfer,
+    OutboundTransferCallbackLog,
+    OutboundTransferEvent,
+    OutboundTransferStateLog,
     PaymentMethodType,
     Provider,
     ProviderAccount,
-    ProviderCallbackLog,
-    ReconciliationRecord,
+    ProviderAccountConfig,
     System,
-    Transaction,
-    TransactionStateLog,
     WebhookDeliveryLog,
     WebhookOutbox,
     generate_api_key,
@@ -50,13 +56,13 @@ def format_datetime_admin(dt):
     return dt_local.strftime("%Y-%m-%d")
 
 
-class TransactionInline(admin.TabularInline):
-    model = Transaction
+class InboundPaymentTransactionInline(admin.TabularInline):
+    model = InboundPaymentTransaction
     extra = 0
     max_num = 8
     can_delete = False
     readonly_fields = [
-        "transaction_type",
+        "operation_type",
         "status_colored",
         "amount_currency",
         "provider",
@@ -64,7 +70,7 @@ class TransactionInline(admin.TabularInline):
         "created_at_display",
     ]
     fields = [
-        "transaction_type",
+        "operation_type",
         "status_colored",
         "amount_currency",
         "provider",
@@ -102,8 +108,8 @@ class TransactionInline(admin.TabularInline):
         return format_datetime_admin(obj.created_at)
 
 
-class PaymentIntentInline(admin.TabularInline):
-    model = PaymentIntent
+class InboundPaymentInline(admin.TabularInline):
+    model = InboundPayment
     extra = 0
     max_num = 6
     can_delete = False
@@ -155,8 +161,8 @@ class PaymentIntentInline(admin.TabularInline):
         return format_datetime_admin(obj.created_at)
 
 
-class TransactionStateLogInline(admin.TabularInline):
-    model = TransactionStateLog
+class InboundPaymentTransactionStateLogInline(admin.TabularInline):
+    model = InboundPaymentTransactionStateLog
     extra = 0
     can_delete = False
     fields = ["from_status", "to_status", "reason", "actor", "created_at_display"]
@@ -226,7 +232,10 @@ class WebhookOutboxInline(admin.TabularInline):
             return "—"
         color = "#dc3545" if obj.status in ["FAILED", "EXHAUSTED"] else "#6c757d"
         return format_html(
-            '<span style="color:{}">{}/{}</span>', color, obj.attempt_count, obj.max_attempts
+            '<span style="color:{}">{}/{}</span>',
+            color,
+            obj.attempt_count,
+            obj.max_attempts,
         )
 
     @admin.display(description="Next attempt")
@@ -312,7 +321,8 @@ class SystemAdmin(admin.ModelAdmin):
                 "fields": ("hashed_api_key", "allowed_ips"),
                 "classes": ("wide",),
                 "description": mark_safe(
-                    "API key is auto-generated on creation and shown <strong>only once</strong> after save."
+                    "API key is auto-generated on creation and shown "
+                    "<strong>only once</strong> after save."
                 ),
             },
         ),
@@ -330,7 +340,10 @@ class SystemAdmin(admin.ModelAdmin):
         ("Webhook", {"fields": ("webhook_url", "webhook_secret")}),
         (
             "Audit",
-            {"fields": ("created_at", "updated_at", "synced", "id"), "classes": ("collapse",)},
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
         ),
     )
 
@@ -444,7 +457,10 @@ class PaymentMethodTypeAdmin(admin.ModelAdmin):
         (None, {"fields": ("code", "name", "is_active")}),
         (
             "Audit",
-            {"fields": ("created_at", "updated_at", "synced", "id"), "classes": ("collapse",)},
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
         ),
     )
 
@@ -461,7 +477,7 @@ class ProviderAdmin(admin.ModelAdmin):
     list_display = [
         "name",
         "slug",
-        "payment_method_type",
+        "payment_method_types_display",
         "is_active_colored",
         "is_async_colored",
         "supports_refund_colored",
@@ -470,7 +486,7 @@ class ProviderAdmin(admin.ModelAdmin):
     list_filter = [
         "is_active",
         "is_async",
-        "payment_method_type",
+        "payment_method_types",
         "supports_refund",
         "supports_3ds",
     ]
@@ -479,7 +495,10 @@ class ProviderAdmin(admin.ModelAdmin):
     ordering = ["name"]
 
     fieldsets = (
-        ("Identity", {"fields": ("name", "slug", "class_name", "payment_method_type")}),
+        (
+            "Identity",
+            {"fields": ("name", "slug", "class_name", "payment_method_types")},
+        ),
         (
             "Capabilities",
             {
@@ -493,7 +512,10 @@ class ProviderAdmin(admin.ModelAdmin):
         ("Status", {"fields": ("is_active",)}),
         (
             "Audit",
-            {"fields": ("created_at", "updated_at", "synced", "id"), "classes": ("collapse",)},
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
         ),
     )
 
@@ -504,6 +526,10 @@ class ProviderAdmin(admin.ModelAdmin):
             if obj.is_active
             else '<span style="color:#dc3545">No</span>'
         )
+
+    @admin.display(description="Payment methods")
+    def payment_method_types_display(self, obj):
+        return ", ".join(obj.payment_method_types.values_list("code", flat=True)) or "—"
 
     @admin.display(description="Async")
     def is_async_colored(self, obj):
@@ -524,26 +550,103 @@ class ProviderAdmin(admin.ModelAdmin):
         )
 
 
+class ProviderAccountConfigAdminForm(forms.ModelForm):
+    class Meta:
+        model = ProviderAccountConfig
+        fields = "__all__"
+        widgets = {
+            "value": forms.TextInput(
+                attrs={
+                    "placeholder": "Configuration value",
+                    "size": 60,
+                }
+            )
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.is_secret:
+            self.fields["value"].widget = forms.PasswordInput(
+                render_value=True,
+                attrs={
+                    "placeholder": "Secret configuration value",
+                    "size": 60,
+                },
+            )
+
+
+class ProviderAccountConfigInline(admin.TabularInline):
+    model = ProviderAccountConfig
+    form = ProviderAccountConfigAdminForm
+    fields = ["key", "value", "value_type", "is_secret"]
+    extra = 1
+    verbose_name = "Configuration item"
+    verbose_name_plural = "Configuration — add, edit, or remove items"
+
+
 @admin.register(ProviderAccount)
 class ProviderAccountAdmin(admin.ModelAdmin):
     list_display = [
         "__str__",
         "environment",
+        "balance_display",
         "is_default_colored",
         "is_active_colored",
         "created_at_display",
     ]
     list_filter = ["environment", "is_default", "is_active", "provider"]
     search_fields = ["name", "provider__name"]
-    readonly_fields = ["created_at", "updated_at", "synced", "id"]
+    readonly_fields = [
+        "provider_available_balance",
+        "balance_currency",
+        "balance_checked_at",
+        "created_at",
+        "updated_at",
+        "synced",
+        "id",
+    ]
     ordering = ["-is_default", "provider__name", "name"]
+    inlines = [ProviderAccountConfigInline]
 
     fieldsets = (
-        (None, {"fields": ("provider", "name", "environment", "is_default", "is_active")}),
-        ("Configuration", {"fields": ("credentials", "extra_config"), "classes": ("wide",)}),
+        (
+            None,
+            {
+                "fields": (
+                    "provider",
+                    "name",
+                    "environment",
+                    "is_default",
+                    "is_active",
+                )
+            },
+        ),
+        (
+            "Outbound transfer ledger",
+            {
+                "fields": (
+                    "outbound_transfer_debit_account",
+                    "outbound_transfer_credit_account",
+                )
+            },
+        ),
+        (
+            "Provider wallet snapshot",
+            {
+                "fields": (
+                    "balance_tracking_enabled",
+                    "provider_available_balance",
+                    "balance_currency",
+                    "balance_checked_at",
+                )
+            },
+        ),
         (
             "Audit",
-            {"fields": ("created_at", "updated_at", "synced", "id"), "classes": ("collapse",)},
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
         ),
     )
 
@@ -552,6 +655,14 @@ class ProviderAccountAdmin(admin.ModelAdmin):
         return (
             format_html('<span style="color:#28a745">{}</span>', "Yes") if obj.is_default else "—"
         )
+
+    @admin.display(description="Provider balance", ordering="provider_available_balance")
+    def balance_display(self, obj):
+        if not obj.balance_tracking_enabled:
+            return "Not tracked"
+        if obj.provider_available_balance is None:
+            return "Awaiting refresh"
+        return f"{obj.provider_available_balance} {obj.balance_currency}".strip()
 
     @admin.display(description="Active")
     def is_active_colored(self, obj):
@@ -565,8 +676,8 @@ class ProviderAccountAdmin(admin.ModelAdmin):
         return format_datetime_admin(obj.created_at)
 
 
-@admin.register(ChargeableEvent)
-class ChargeableEventAdmin(admin.ModelAdmin):
+@admin.register(InboundPaymentEvent)
+class InboundPaymentEventAdmin(admin.ModelAdmin):
     list_display = [
         "__str__",
         "system",
@@ -602,13 +713,18 @@ class ChargeableEventAdmin(admin.ModelAdmin):
             {
                 "fields": ("callback_destination",),
                 "classes": ("wide",),
-                "description": "Controls which system receives payment status callbacks / webhooks.",
+                "description": (
+                    "Controls which system receives inbound payment status callbacks/webhooks."
+                ),
             },
         ),
         ("Status", {"fields": ("is_active",)}),
         (
             "Audit",
-            {"fields": ("created_at", "updated_at", "synced", "id"), "classes": ("collapse",)},
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
         ),
     )
 
@@ -620,8 +736,8 @@ class ChargeableEventAdmin(admin.ModelAdmin):
         )
 
 
-@admin.register(PaymentMethodToken)
-class PaymentMethodTokenAdmin(admin.ModelAdmin):
+@admin.register(InboundPaymentMethodToken)
+class InboundPaymentMethodTokenAdmin(admin.ModelAdmin):
     list_display = [
         "__str__",
         "system",
@@ -652,7 +768,10 @@ class PaymentMethodTokenAdmin(admin.ModelAdmin):
         ("Status", {"fields": ("is_active",)}),
         (
             "Audit",
-            {"fields": ("created_at", "updated_at", "synced", "id"), "classes": ("collapse",)},
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
         ),
     )
 
@@ -670,18 +789,24 @@ class PaymentMethodTokenAdmin(admin.ModelAdmin):
         )
 
 
-@admin.register(PaymentIntent)
-class PaymentIntentAdmin(admin.ModelAdmin):
+@admin.register(InboundPayment)
+class InboundPaymentAdmin(admin.ModelAdmin):
     list_display = [
         "__str__",
         "system",
         "status_colored",
         "amount_currency",
-        "chargeable_event",
+        "inbound_payment_event",
         "payment_method_token_short",
         "created_at_display",
     ]
-    list_filter = ["system", "status", "currency", "chargeable_event", "created_at"]
+    list_filter = [
+        "system",
+        "status",
+        "currency",
+        "inbound_payment_event",
+        "created_at",
+    ]
     search_fields = ["idempotency_key", "external_reference", "system__slug"]
     readonly_fields = [
         "created_at",
@@ -693,7 +818,7 @@ class PaymentIntentAdmin(admin.ModelAdmin):
         "amount_refunded",
         "amount_settled",
     ]
-    inlines = [TransactionInline]
+    inlines = [InboundPaymentTransactionInline]
     date_hierarchy = "created_at"
     ordering = ["-created_at"]
 
@@ -703,7 +828,7 @@ class PaymentIntentAdmin(admin.ModelAdmin):
             {
                 "fields": (
                     ("system", "source_system"),
-                    "chargeable_event",
+                    "inbound_payment_event",
                     "payment_method_token",
                     ("amount", "currency"),
                 )
@@ -723,14 +848,17 @@ class PaymentIntentAdmin(admin.ModelAdmin):
         (
             "References",
             {
-                "fields": ("idempotency_key", "external_reference", "payment_payload"),
+                "fields": ("idempotency_key", "external_reference", "provider_payload"),
                 "classes": ("wide",),
             },
         ),
         ("Metadata", {"fields": ("metadata",), "classes": ("collapse",)}),
         (
             "Audit",
-            {"fields": ("created_at", "updated_at", "synced", "id"), "classes": ("collapse",)},
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
         ),
     )
 
@@ -769,30 +897,30 @@ class PaymentIntentAdmin(admin.ModelAdmin):
         return format_datetime_admin(obj.created_at)
 
 
-@admin.register(Transaction)
-class TransactionAdmin(admin.ModelAdmin):
+@admin.register(InboundPaymentTransaction)
+class InboundPaymentTransactionAdmin(admin.ModelAdmin):
     list_display = [
         "__str__",
-        "payment_intent_link",
-        "transaction_type",
+        "inbound_payment_link",
+        "operation_type",
         "status_colored",
         "amount_currency",
         "provider",
         "created_at_display",
     ]
-    list_filter = ["transaction_type", "status", "provider", "currency", "created_at"]
+    list_filter = ["operation_type", "status", "provider", "currency", "created_at"]
     search_fields = [
         "provider_transaction_id",
         "provider_reference",
-        "payment_intent__idempotency_key",
+        "inbound_payment__idempotency_key",
     ]
     readonly_fields = ["created_at", "updated_at", "synced", "id", "celery_task_id"]
-    inlines = [TransactionStateLogInline, WebhookOutboxInline]
+    inlines = [InboundPaymentTransactionStateLogInline, WebhookOutboxInline]
     date_hierarchy = "created_at"
     ordering = ["-created_at"]
 
     fieldsets = (
-        ("Core", {"fields": ("payment_intent", "transaction_type", "status")}),
+        ("Core", {"fields": ("inbound_payment", "operation_type", "status")}),
         (
             "Provider",
             {
@@ -807,9 +935,15 @@ class TransactionAdmin(admin.ModelAdmin):
         ("Amount", {"fields": (("amount", "currency"),)}),
         (
             "Payloads",
-            {"fields": ("request_payload", "response_payload"), "classes": ("wide", "collapse")},
+            {
+                "fields": ("request_payload", "response_payload"),
+                "classes": ("wide", "collapse"),
+            },
         ),
-        ("Failure", {"fields": ("failure_reason", "failure_code"), "classes": ("collapse",)}),
+        (
+            "Failure",
+            {"fields": ("failure_reason", "failure_code"), "classes": ("collapse",)},
+        ),
         (
             "Timing",
             {
@@ -823,18 +957,24 @@ class TransactionAdmin(admin.ModelAdmin):
         (
             "Audit",
             {
-                "fields": ("created_at", "updated_at", "synced", "id", "celery_task_id"),
+                "fields": (
+                    "created_at",
+                    "updated_at",
+                    "synced",
+                    "id",
+                    "celery_task_id",
+                ),
                 "classes": ("collapse",),
             },
         ),
     )
 
-    @admin.display(description="Intent")
-    def payment_intent_link(self, obj):
-        if not obj.payment_intent:
+    @admin.display(description="Inbound payment")
+    def inbound_payment_link(self, obj):
+        if not obj.inbound_payment:
             return "—"
-        url = reverse("admin:core_paymentintent_change", args=[obj.payment_intent.id])
-        return format_html('<a href="{}">{}</a>', url, f"PI-{obj.payment_intent.id}")
+        url = reverse("admin:core_inboundpayment_change", args=[obj.inbound_payment.id])
+        return format_html('<a href="{}">{}</a>', url, f"INBOUND-{obj.inbound_payment.id}")
 
     @admin.display(description="Status")
     def status_colored(self, obj):
@@ -859,11 +999,17 @@ class TransactionAdmin(admin.ModelAdmin):
         return format_datetime_admin(obj.created_at)
 
 
-@admin.register(TransactionStateLog)
-class TransactionStateLogAdmin(admin.ModelAdmin):
-    list_display = ["transaction", "from_status", "to_status", "created_at_display", "actor"]
-    list_filter = ["transaction__payment_intent__system", "created_at"]
-    search_fields = ["transaction__id", "reason", "actor"]
+@admin.register(InboundPaymentTransactionStateLog)
+class InboundPaymentTransactionStateLogAdmin(admin.ModelAdmin):
+    list_display = [
+        "inbound_payment_transaction",
+        "from_status",
+        "to_status",
+        "created_at_display",
+        "actor",
+    ]
+    list_filter = ["inbound_payment_transaction__inbound_payment__system", "created_at"]
+    search_fields = ["inbound_payment_transaction__id", "reason", "actor"]
     readonly_fields = ["created_at", "updated_at", "synced", "id"]
     date_hierarchy = "created_at"
     ordering = ["-created_at"]
@@ -871,11 +1017,23 @@ class TransactionStateLogAdmin(admin.ModelAdmin):
     fieldsets = (
         (
             None,
-            {"fields": ("transaction", "from_status", "to_status", "reason", "actor", "metadata")},
+            {
+                "fields": (
+                    "inbound_payment_transaction",
+                    "from_status",
+                    "to_status",
+                    "reason",
+                    "actor",
+                    "metadata",
+                )
+            },
         ),
         (
             "Audit",
-            {"fields": ("created_at", "updated_at", "synced", "id"), "classes": ("collapse",)},
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
         ),
     )
 
@@ -885,6 +1043,179 @@ class TransactionStateLogAdmin(admin.ModelAdmin):
     @admin.display(description="When", ordering="created_at")
     def created_at_display(self, obj):
         return format_datetime_admin(obj.created_at)
+
+
+class OutboundTransferStateLogInline(admin.TabularInline):
+    model = OutboundTransferStateLog
+    extra = 0
+    can_delete = False
+    readonly_fields = ["from_status", "to_status", "reason", "actor", "created_at"]
+    fields = readonly_fields
+    ordering = ["-created_at"]
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+class OutboundTransferForEventInline(admin.TabularInline):
+    model = OutboundTransfer
+    extra = 0
+    max_num = 8
+    can_delete = False
+    fields = ["id", "source_system", "status", "amount", "currency", "created_at"]
+    readonly_fields = fields
+    ordering = ["-created_at"]
+    show_change_link = True
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(OutboundTransferEvent)
+class OutboundTransferEventAdmin(admin.ModelAdmin):
+    list_display = [
+        "__str__",
+        "provider",
+        "provider_account",
+        "recipient_type",
+        "payment_method_type",
+        "currency",
+        "callback_destination",
+        "is_active",
+    ]
+    list_filter = [
+        "system",
+        "provider",
+        "recipient_type",
+        "payment_method_type",
+        "currency",
+        "callback_destination",
+        "is_active",
+    ]
+    search_fields = ["name", "slug", "system__slug", "provider__name"]
+    readonly_fields = ["created_at", "updated_at", "synced", "id"]
+    ordering = ["system__name", "name"]
+    inlines = [OutboundTransferForEventInline]
+    fieldsets = (
+        ("Identity", {"fields": ("system", "name", "slug", "description")}),
+        (
+            "Routing",
+            {
+                "fields": (
+                    "provider",
+                    "provider_account",
+                    "recipient_type",
+                    "payment_method_type",
+                    "currency",
+                ),
+                "description": (
+                    "These values are selected by the event and cannot be overridden "
+                    "by API callers."
+                ),
+            },
+        ),
+        (
+            "Defaults and callbacks",
+            {"fields": ("default_reason", "callback_destination")},
+        ),
+        ("Status", {"fields": ("is_active",)}),
+        (
+            "Audit",
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
+
+
+@admin.register(OutboundTransfer)
+class OutboundTransferAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "outbound_transfer_event",
+        "system",
+        "source_system",
+        "provider",
+        "recipient_type",
+        "payment_method_type",
+        "status",
+        "amount_currency",
+        "external_reference",
+        "created_at",
+    ]
+    list_filter = [
+        "status",
+        "recipient_type",
+        "payment_method_type",
+        "provider",
+        "outbound_transfer_event",
+        "system",
+        "source_system",
+        "currency",
+        "created_at",
+    ]
+    search_fields = [
+        "idempotency_key",
+        "external_reference",
+        "provider_transaction_id",
+        "outbound_transfer_event__slug",
+        "source_system__slug",
+    ]
+    readonly_fields = [
+        "provider_transaction_id",
+        "provider_reference",
+        "response_payload",
+        "failure_code",
+        "failure_reason",
+        "provider_callback_received_at",
+        "reconciliation_due_at",
+        "reconciliation_attempts",
+        "created_at",
+        "updated_at",
+        "synced",
+        "id",
+    ]
+    inlines = [OutboundTransferStateLogInline]
+
+    @admin.display(description="Amount")
+    def amount_currency(self, obj):
+        return f"{obj.amount} {obj.currency}"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(OutboundTransferCallbackLog)
+class OutboundTransferCallbackLogAdmin(admin.ModelAdmin):
+    list_display = [
+        "outbound_transfer",
+        "provider",
+        "status",
+        "parsed_status",
+        "created_at",
+    ]
+    list_filter = ["status", "provider", "created_at"]
+    search_fields = ["outbound_transfer__id", "processing_error"]
+    readonly_fields = [
+        "provider",
+        "outbound_transfer",
+        "raw_headers",
+        "raw_payload",
+        "parsed_status",
+        "processing_error",
+        "status",
+        "created_at",
+        "updated_at",
+        "synced",
+        "id",
+    ]
+
+    def has_add_permission(self, request):
+        return False
 
 
 @admin.register(LedgerAccount)
@@ -908,10 +1239,25 @@ class LedgerAccountAdmin(admin.ModelAdmin):
     ordering = ["code"]
 
     fieldsets = (
-        (None, {"fields": ("code", "name", "account_type", "currency", "system", "is_active")}),
+        (
+            None,
+            {
+                "fields": (
+                    "code",
+                    "name",
+                    "account_type",
+                    "currency",
+                    "system",
+                    "is_active",
+                )
+            },
+        ),
         (
             "Audit",
-            {"fields": ("created_at", "updated_at", "synced", "id"), "classes": ("collapse",)},
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
         ),
     )
 
@@ -926,7 +1272,7 @@ class LedgerAccountAdmin(admin.ModelAdmin):
 @admin.register(LedgerPosting)
 class LedgerPostingAdmin(admin.ModelAdmin):
     list_display = [
-        "transaction_link",
+        "owner_link",
         "account",
         "entry_type_colored",
         "amount_currency",
@@ -934,7 +1280,12 @@ class LedgerPostingAdmin(admin.ModelAdmin):
         "created_at_display",
     ]
     list_filter = ["entry_type", "currency", "account__account_type", "created_at"]
-    search_fields = ["transaction__id", "account__code", "description"]
+    search_fields = [
+        "inbound_payment_transaction__id",
+        "outbound_transfer__id",
+        "account__code",
+        "description",
+    ]
     readonly_fields = ["created_at", "updated_at", "synced", "id"]
     date_hierarchy = "created_at"
     ordering = ["-created_at"]
@@ -947,7 +1298,8 @@ class LedgerPostingAdmin(admin.ModelAdmin):
             None,
             {
                 "fields": (
-                    "transaction",
+                    "inbound_payment_transaction",
+                    "outbound_transfer",
                     "account",
                     "entry_type",
                     "amount",
@@ -959,14 +1311,29 @@ class LedgerPostingAdmin(admin.ModelAdmin):
         ),
         (
             "Audit",
-            {"fields": ("created_at", "updated_at", "synced", "id"), "classes": ("collapse",)},
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
         ),
     )
 
-    @admin.display(description="Transaction")
-    def transaction_link(self, obj):
-        url = reverse("admin:core_transaction_change", args=[obj.transaction.id])
-        return format_html('<a href="{}">{}</a>', url, f"TXN-{obj.transaction.id}")
+    @admin.display(description="Owner")
+    def owner_link(self, obj):
+        if obj.inbound_payment_transaction_id:
+            transaction = obj.inbound_payment_transaction
+            url = reverse(
+                "admin:core_inboundpaymenttransaction_change",
+                args=[transaction.id],
+            )
+            return format_html(
+                '<a href="{}">{}</a>',
+                url,
+                f"INBOUND-TRANSACTION-{transaction.id}",
+            )
+        transfer = obj.outbound_transfer
+        url = reverse("admin:core_outboundtransfer_change", args=[transfer.id])
+        return format_html('<a href="{}">{}</a>', url, f"OUTBOUND-{transfer.id}")
 
     @admin.display(description="Type")
     def entry_type_colored(self, obj):
@@ -994,11 +1361,15 @@ class WebhookOutboxAdmin(admin.ModelAdmin):
         "status_colored",
         "attempt_count_display",
         "next_attempt_at",
-        "payment_intent_short",
+        "inbound_payment_short",
         "created_at_display",
     ]
     list_filter = ["system", "status", "event_type", "next_attempt_at"]
-    search_fields = ["payment_intent__idempotency_key", "event_type"]
+    search_fields = [
+        "inbound_payment__idempotency_key",
+        "outbound_transfer__idempotency_key",
+        "event_type",
+    ]
     readonly_fields = ["created_at", "updated_at", "synced", "id"]
     inlines = [WebhookDeliveryLogInline]
     date_hierarchy = "next_attempt_at"
@@ -1006,7 +1377,18 @@ class WebhookOutboxAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ("Target", {"fields": ("system", "destination_url")}),
-        ("Event", {"fields": ("payment_intent", "transaction", "event_type", "payload")}),
+        (
+            "Event",
+            {
+                "fields": (
+                    "inbound_payment",
+                    "inbound_payment_transaction",
+                    "outbound_transfer",
+                    "event_type",
+                    "payload",
+                )
+            },
+        ),
         (
             "Delivery",
             {
@@ -1021,7 +1403,10 @@ class WebhookOutboxAdmin(admin.ModelAdmin):
         ),
         (
             "Audit",
-            {"fields": ("created_at", "updated_at", "synced", "id"), "classes": ("collapse",)},
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
         ),
     )
 
@@ -1046,14 +1431,19 @@ class WebhookOutboxAdmin(admin.ModelAdmin):
             return "—"
         color = "#dc3545" if obj.status in ["FAILED", "EXHAUSTED"] else "#6c757d"
         return format_html(
-            '<span style="color:{}">{}/{}</span>', color, obj.attempt_count, obj.max_attempts
+            '<span style="color:{}">{}/{}</span>',
+            color,
+            obj.attempt_count,
+            obj.max_attempts,
         )
 
-    @admin.display(description="Intent")
-    def payment_intent_short(self, obj):
-        if not obj.payment_intent:
-            return "—"
-        return f"PI-{obj.payment_intent.id}"
+    @admin.display(description="Money movement")
+    def inbound_payment_short(self, obj):
+        if obj.inbound_payment:
+            return f"INBOUND-{obj.inbound_payment.id}"
+        if obj.outbound_transfer:
+            return f"OUTBOUND-{obj.outbound_transfer.id}"
+        return "—"
 
     @admin.display(description="Created", ordering="created_at")
     def created_at_display(self, obj):
@@ -1078,7 +1468,7 @@ class WebhookDeliveryLogAdmin(admin.ModelAdmin):
         "created_at",
     ]
     search_fields = [
-        "outbox__payment_intent__idempotency_key",
+        "outbox__inbound_payment__idempotency_key",
         "outbox__event_type",
         "error_message",
         "response_body",
@@ -1106,7 +1496,10 @@ class WebhookDeliveryLogAdmin(admin.ModelAdmin):
         ("Webhook Outbox", {"fields": ("outbox", "attempt_number")}),
         (
             "Request",
-            {"fields": ("request_headers", "request_payload"), "classes": ("wide", "collapse")},
+            {
+                "fields": ("request_headers", "request_payload"),
+                "classes": ("wide", "collapse"),
+            },
         ),
         (
             "Response",
@@ -1123,7 +1516,10 @@ class WebhookDeliveryLogAdmin(admin.ModelAdmin):
         ("Error", {"fields": ("error_message",), "classes": ("collapse",)}),
         (
             "Audit",
-            {"fields": ("created_at", "updated_at", "synced", "id"), "classes": ("collapse",)},
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
         ),
     )
 
@@ -1174,17 +1570,21 @@ class WebhookDeliveryLogAdmin(admin.ModelAdmin):
         return format_datetime_admin(obj.created_at)
 
 
-@admin.register(ProviderCallbackLog)
-class ProviderCallbackLogAdmin(admin.ModelAdmin):
+@admin.register(InboundPaymentCallbackLog)
+class InboundPaymentCallbackLogAdmin(admin.ModelAdmin):
     list_display = [
         "provider",
-        "transaction",
+        "inbound_payment_transaction",
         "status_colored",
         "parsed_status",
         "created_at_display",
     ]
     list_filter = ["status", "provider", "created_at"]
-    search_fields = ["raw_payload", "processing_error", "provider_reference"]
+    search_fields = [
+        "inbound_payment_transaction__provider_reference",
+        "raw_payload",
+        "processing_error",
+    ]
     readonly_fields = ["created_at", "updated_at", "id"]
     date_hierarchy = "created_at"
     ordering = ["-created_at"]
@@ -1194,9 +1594,9 @@ class ProviderCallbackLogAdmin(admin.ModelAdmin):
 
     fieldsets = (
         (
-            "Provider & Transaction",
+            "Provider and inbound payment transaction",
             {
-                "fields": ("provider", "transaction"),
+                "fields": ("provider", "inbound_payment_transaction"),
             },
         ),
         (
@@ -1224,16 +1624,18 @@ class ProviderCallbackLogAdmin(admin.ModelAdmin):
     @admin.display(description="Status", ordering="status")
     def status_colored(self, obj):
         colors = {
-            ProviderCallbackLog.Status.RECEIVED: "#6c757d",
-            ProviderCallbackLog.Status.PROCESSING: "#007bff",
-            ProviderCallbackLog.Status.PROCESSED: "#28a745",
-            ProviderCallbackLog.Status.FAILED: "#dc3545",
-            ProviderCallbackLog.Status.REJECTED: "#dc3545",
-            ProviderCallbackLog.Status.IGNORED: "#fd7e14",
+            InboundPaymentCallbackLog.Status.RECEIVED: "#6c757d",
+            InboundPaymentCallbackLog.Status.PROCESSING: "#007bff",
+            InboundPaymentCallbackLog.Status.PROCESSED: "#28a745",
+            InboundPaymentCallbackLog.Status.FAILED: "#dc3545",
+            InboundPaymentCallbackLog.Status.REJECTED: "#dc3545",
+            InboundPaymentCallbackLog.Status.IGNORED: "#fd7e14",
         }
         color = colors.get(obj.status, "#6c757d")
         return format_html(
-            '<span style="color:{}; font-weight:bold;">{}</span>', color, obj.get_status_display()
+            '<span style="color:{}; font-weight:bold;">{}</span>',
+            color,
+            obj.get_status_display(),
         )
 
     @admin.display(description="Created", ordering="created_at")
@@ -1241,17 +1643,17 @@ class ProviderCallbackLogAdmin(admin.ModelAdmin):
         return format_datetime_admin(obj.created_at)
 
 
-@admin.register(ReconciliationRecord)
-class ReconciliationRecordAdmin(admin.ModelAdmin):
+@admin.register(InboundPaymentReconciliation)
+class InboundPaymentReconciliationAdmin(admin.ModelAdmin):
     list_display = [
-        "transaction_link",
+        "inbound_payment_transaction_link",
         "status_colored",
         "provider_reported_status",
         "attempts",
         "last_attempted_at",
     ]
     list_filter = ["status", "created_at"]
-    search_fields = ["transaction__id", "discrepancy_notes"]
+    search_fields = ["inbound_payment_transaction__id", "discrepancy_notes"]
     readonly_fields = ["created_at", "updated_at", "synced", "id"]
     date_hierarchy = "created_at"
     ordering = ["-created_at"]
@@ -1260,13 +1662,16 @@ class ReconciliationRecordAdmin(admin.ModelAdmin):
         return False
 
     fieldsets = (
-        ("Transaction", {"fields": ("transaction",)}),
+        ("Inbound payment transaction", {"fields": ("inbound_payment_transaction",)}),
         ("Status", {"fields": ("status", "provider_reported_status")}),
         ("Resolution", {"fields": ("discrepancy_notes", "resolved_by", "resolved_at")}),
         ("Attempts", {"fields": ("attempts", "last_attempted_at")}),
         (
             "Audit",
-            {"fields": ("created_at", "updated_at", "synced", "id"), "classes": ("collapse",)},
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
         ),
     )
 
@@ -1285,7 +1690,15 @@ class ReconciliationRecordAdmin(admin.ModelAdmin):
             obj.status,
         )
 
-    @admin.display(description="Transaction")
-    def transaction_link(self, obj):
-        url = reverse("admin:core_transaction_change", args=[obj.transaction.id])
-        return format_html('<a href="{}">{}</a>', url, f"TXN-{obj.transaction.id}")
+    @admin.display(description="Inbound payment transaction")
+    def inbound_payment_transaction_link(self, obj):
+        transaction = obj.inbound_payment_transaction
+        url = reverse(
+            "admin:core_inboundpaymenttransaction_change",
+            args=[transaction.id],
+        )
+        return format_html(
+            '<a href="{}">{}</a>',
+            url,
+            f"INBOUND-TRANSACTION-{transaction.id}",
+        )
