@@ -233,7 +233,7 @@ class InboundPaymentService:
             inbound_payment=inbound_payment,
             operation_type=InboundPaymentTransaction.Operation.COLLECTION,
             amount=inbound_payment.amount,
-            request_payload=cls._build_provider_payload(inbound_payment, extra_payload),
+            provider_payload=cls._build_provider_payload(inbound_payment, extra_payload),
             actor=actor,
         ).run()
         cls._enqueue_webhook(inbound_payment, inbound_payment_transaction)
@@ -254,7 +254,7 @@ class InboundPaymentService:
             inbound_payment=inbound_payment,
             operation_type=InboundPaymentTransaction.Operation.AUTHORIZATION,
             amount=inbound_payment.amount,
-            request_payload=cls._build_provider_payload(inbound_payment, extra_payload),
+            provider_payload=cls._build_provider_payload(inbound_payment, extra_payload),
             actor=actor,
         ).run()
         cls._enqueue_webhook(inbound_payment, inbound_payment_transaction)
@@ -295,7 +295,7 @@ class InboundPaymentService:
             inbound_payment=inbound_payment,
             operation_type=InboundPaymentTransaction.Operation.CAPTURE,
             amount=capture_amount,
-            request_payload={**extra_payload, "currency": inbound_payment.currency},
+            provider_payload={**extra_payload, "currency": inbound_payment.currency},
             actor=actor,
             parent_provider_transaction_id=authorization_transaction.provider_transaction_id,
         ).run()
@@ -322,7 +322,7 @@ class InboundPaymentService:
             inbound_payment=inbound_payment,
             operation_type=InboundPaymentTransaction.Operation.VOID,
             amount=inbound_payment.amount_authorized,
-            request_payload=extra_payload,
+            provider_payload=extra_payload,
             actor=actor,
             parent_provider_transaction_id=authorization_transaction.provider_transaction_id,
         ).run()
@@ -371,7 +371,7 @@ class InboundPaymentService:
             inbound_payment=inbound_payment,
             operation_type=operation_type,
             amount=refund_amount,
-            request_payload={**extra_payload, "currency": inbound_payment.currency},
+            provider_payload={**extra_payload, "currency": inbound_payment.currency},
             actor=actor,
             parent_provider_transaction_id=original_transaction.provider_transaction_id,
         ).run()

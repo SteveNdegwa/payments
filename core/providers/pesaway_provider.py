@@ -96,6 +96,7 @@ class PesaWayProvider(BaseProvider):
         }
 
     def charge(self, *, amount: Decimal, currency: str, payload: dict) -> ProviderResult:
+        request_payload = None
         try:
             if currency.upper() != "KES":
                 return self._unsupported_currency(currency)
@@ -134,6 +135,7 @@ class PesaWayProvider(BaseProvider):
                     status=ProviderResultStatus.REQUIRES_ACTION,
                     provider_transaction_id=data.get("TransactionID", ""),
                     provider_reference=data.get("OriginatorReference", ""),
+                    request_payload=request_payload,
                     raw_response=data,
                     next_action={
                         "type": "mobile_money_prompt",
@@ -148,6 +150,7 @@ class PesaWayProvider(BaseProvider):
                 status=ProviderResultStatus.FAILED,
                 failure_code=str(data.get("code") or "provider_rejected"),
                 failure_reason=data.get("ResponseDescription", "PesaWay rejected the collection"),
+                request_payload=request_payload,
                 raw_response=data,
             )
         except RequestException as exc:
@@ -156,6 +159,7 @@ class PesaWayProvider(BaseProvider):
                 status=ProviderResultStatus.FAILED,
                 failure_code="http_error",
                 failure_reason=str(exc),
+                request_payload=request_payload,
             )
         except Exception as exc:
             logger.exception("PesaWay collection failed")
@@ -163,15 +167,18 @@ class PesaWayProvider(BaseProvider):
                 status=ProviderResultStatus.FAILED,
                 failure_code="provider_error",
                 failure_reason=str(exc),
+                request_payload=request_payload,
             )
 
     def query_status(self, *, provider_transaction_id: str, payload: dict) -> ProviderResult:
+        request_payload = None
         try:
             payment_method_code = payload.get("payment_method_code")
             resource = "bank" if payment_method_code == "BANK_TRANSFER" else "mobile-money"
+            request_payload = {"TransactionReference": provider_transaction_id}
             response = requests.get(
                 f"{self.base_url}/api/v1/{resource}/transaction-query/",
-                json={"TransactionReference": provider_transaction_id},
+                json=request_payload,
                 headers=self.headers,
                 timeout=30,
             )
@@ -184,6 +191,7 @@ class PesaWayProvider(BaseProvider):
                 provider_reference=data.get("Receipt", ""),
                 failure_code="" if success else str(data.get("ResultCode", "unknown")),
                 failure_reason="" if success else data.get("ResultDesc", "Transaction failed"),
+                request_payload=request_payload,
                 raw_response=data,
             )
         except RequestException as exc:
@@ -193,6 +201,7 @@ class PesaWayProvider(BaseProvider):
                 provider_transaction_id=provider_transaction_id,
                 failure_code="http_error",
                 failure_reason=str(exc),
+                request_payload=request_payload,
             )
 
     def transfer(
@@ -204,6 +213,7 @@ class PesaWayProvider(BaseProvider):
         currency: str,
         payload: dict,
     ) -> ProviderResult:
+        request_payload = None
         try:
             if currency.upper() != "KES":
                 return self._unsupported_currency(currency)
@@ -265,12 +275,14 @@ class PesaWayProvider(BaseProvider):
                     status=ProviderResultStatus.PENDING,
                     provider_transaction_id=data.get("TransactionID", ""),
                     provider_reference=data.get("OriginatorReference", ""),
+                    request_payload=request_payload,
                     raw_response=data,
                 )
             return ProviderResult(
                 status=ProviderResultStatus.FAILED,
                 failure_code=str(data.get("code") or "provider_rejected"),
                 failure_reason=data.get("ResponseDescription", "PesaWay rejected the transfer"),
+                request_payload=request_payload,
                 raw_response=data,
             )
         except RequestException as exc:
@@ -279,6 +291,7 @@ class PesaWayProvider(BaseProvider):
                 status=ProviderResultStatus.UNKNOWN,
                 failure_code="http_error",
                 failure_reason=str(exc),
+                request_payload=request_payload,
             )
         except Exception as exc:
             logger.exception("PesaWay outbound transfer failed")
@@ -286,6 +299,7 @@ class PesaWayProvider(BaseProvider):
                 status=ProviderResultStatus.FAILED,
                 failure_code="provider_error",
                 failure_reason=str(exc),
+                request_payload=request_payload,
             )
 
     @staticmethod

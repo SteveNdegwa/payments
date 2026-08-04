@@ -909,7 +909,7 @@ class InboundPaymentTransactionAdmin(admin.ModelAdmin):
         (
             "Payloads",
             {
-                "fields": ("request_payload", "response_payload"),
+                "fields": ("provider_payload", "request_payload", "response_payload"),
                 "classes": ("wide", "collapse"),
             },
         ),

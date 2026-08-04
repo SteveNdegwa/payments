@@ -95,7 +95,7 @@ class InboundPaymentTransactionExecutor:
         inbound_payment: InboundPayment,
         operation_type: str,
         amount: Decimal,
-        request_payload: dict,
+        provider_payload: dict,
         actor: str = "celery",
         # For captures, voids, and refunds: the provider ID from the original transaction.
         parent_provider_transaction_id: str = "",
@@ -104,7 +104,7 @@ class InboundPaymentTransactionExecutor:
         self.operation_type = operation_type
         self.provider_account = inbound_payment.inbound_payment_event.provider_account
         self.amount = amount
-        self.request_payload = request_payload
+        self.provider_payload = provider_payload
         self.actor = actor
         self.parent_provider_transaction_id = parent_provider_transaction_id
 
@@ -133,7 +133,7 @@ class InboundPaymentTransactionExecutor:
             raise ValueError("BASE_URL environment variable is not configured.")
         base_url = base_url.strip().rstrip("/")
         callback_path = f"/core/inbound-payments/callbacks/{txn.provider.slug}/{txn.id}/"
-        self.request_payload["callback_url"] = urljoin(f"{base_url}/", callback_path.lstrip("/"))
+        self.provider_payload["callback_url"] = urljoin(f"{base_url}/", callback_path.lstrip("/"))
 
     def _create_transaction(self) -> InboundPaymentTransaction:
         with db_transaction.atomic():
@@ -144,7 +144,7 @@ class InboundPaymentTransactionExecutor:
                 provider_account=self.provider_account,
                 amount=self.amount,
                 currency=self.inbound_payment.currency,
-                request_payload=self.request_payload,
+                provider_payload=self.provider_payload,
                 status=InboundPaymentTransaction.Status.QUEUED,
             )
             InboundPaymentTransactionStateLog.objects.create(
@@ -190,19 +190,19 @@ class InboundPaymentTransactionExecutor:
             return provider.charge(
                 amount=self.amount,
                 currency=inbound_payment.currency,
-                payload=self.request_payload,
+                payload=self.provider_payload,
             )
         if operation_type == InboundPaymentTransaction.Operation.AUTHORIZATION:
             return provider.authorize(
                 amount=self.amount,
                 currency=inbound_payment.currency,
-                payload=self.request_payload,
+                payload=self.provider_payload,
             )
         if operation_type == InboundPaymentTransaction.Operation.CAPTURE:
             return provider.capture(
                 provider_transaction_id=self.parent_provider_transaction_id,
                 amount=self.amount,
-                payload=self.request_payload,
+                payload=self.provider_payload,
             )
         if operation_type in (
             InboundPaymentTransaction.Operation.REFUND,
@@ -211,12 +211,12 @@ class InboundPaymentTransactionExecutor:
             return provider.refund(
                 provider_transaction_id=self.parent_provider_transaction_id,
                 amount=self.amount,
-                payload=self.request_payload,
+                payload=self.provider_payload,
             )
         if operation_type == InboundPaymentTransaction.Operation.VOID:
             return provider.void(
                 provider_transaction_id=self.parent_provider_transaction_id,
-                payload=self.request_payload,
+                payload=self.provider_payload,
             )
 
         raise ValueError(f"Unsupported operation_type: {operation_type}")
@@ -233,6 +233,7 @@ class InboundPaymentTransactionExecutor:
             txn.status = new_transaction_status
             txn.provider_transaction_id = result.provider_transaction_id
             txn.provider_reference = result.provider_reference
+            txn.request_payload = result.request_payload
             txn.response_payload = result.raw_response
             txn.failure_code = result.failure_code
             txn.failure_reason = result.failure_reason

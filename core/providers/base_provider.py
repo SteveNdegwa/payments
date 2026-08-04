@@ -20,6 +20,7 @@ class ProviderResult:
     status: ProviderResultStatus
     provider_transaction_id: str = ""
     provider_reference: str = ""
+    request_payload: dict | None = None
     raw_response: dict = field(default_factory=dict)
     failure_code: str = ""
     failure_reason: str = ""

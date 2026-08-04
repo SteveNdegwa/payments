@@ -105,6 +105,7 @@ class MpesaDarajaProvider(BaseProvider):
         return self._paybill_to_paybill(amount=amount, payload=payload)
 
     def _stk_push(self, *, amount: Decimal, payload: dict) -> ProviderResult:
+        request_payload = None
         try:
             self._validate_stk_push_config()
             check_required_fields(
@@ -156,6 +157,7 @@ class MpesaDarajaProvider(BaseProvider):
             return ProviderResult(
                 status=ProviderResultStatus.REQUIRES_ACTION,
                 provider_transaction_id=response_data.get("CheckoutRequestID"),
+                request_payload=request_payload,
                 raw_response=response_data,
                 next_action={
                     "type": "mobile_money_stk_push",
@@ -171,6 +173,7 @@ class MpesaDarajaProvider(BaseProvider):
 
             return ProviderResult(
                 status=ProviderResultStatus.FAILED,
+                request_payload=request_payload,
                 failure_code="http_error",
                 failure_reason=str(exc),
                 raw_response=getattr(exc.response, "json", dict)(),
@@ -181,12 +184,14 @@ class MpesaDarajaProvider(BaseProvider):
 
             return ProviderResult(
                 status=ProviderResultStatus.FAILED,
+                request_payload=request_payload,
                 failure_code="provider_error",
                 failure_reason=str(exc),
                 raw_response={},
             )
 
     def _paybill_to_paybill(self, *, amount: Decimal, payload: dict) -> ProviderResult:
+        request_payload = None
         try:
             self._validate_b2b_config()
             check_required_fields(
@@ -236,6 +241,7 @@ class MpesaDarajaProvider(BaseProvider):
                     status=ProviderResultStatus.PENDING,
                     provider_transaction_id=response_data.get("ConversationID", ""),
                     provider_reference=response_data.get("OriginatorConversationID", ""),
+                    request_payload=request_payload,
                     raw_response=response_data,
                 )
 
@@ -243,6 +249,7 @@ class MpesaDarajaProvider(BaseProvider):
                 status=ProviderResultStatus.FAILED,
                 failure_code=response_code or "provider_rejected",
                 failure_reason=response_data.get("ResponseDescription", "B2B request failed"),
+                request_payload=request_payload,
                 raw_response=response_data,
             )
 
@@ -253,6 +260,7 @@ class MpesaDarajaProvider(BaseProvider):
                 status=ProviderResultStatus.UNKNOWN,
                 failure_code="http_error",
                 failure_reason=str(exc),
+                request_payload=request_payload,
                 raw_response=getattr(exc.response, "json", dict)(),
             )
 
@@ -263,6 +271,7 @@ class MpesaDarajaProvider(BaseProvider):
                 status=ProviderResultStatus.FAILED,
                 failure_code="provider_error",
                 failure_reason=str(exc),
+                request_payload=request_payload,
                 raw_response={},
             )
 
@@ -273,6 +282,7 @@ class MpesaDarajaProvider(BaseProvider):
         amount: Decimal,
         payload: dict,
     ) -> ProviderResult:
+        request_payload = None
         try:
             shortcode = self.config["business_shortcode"]
             initiator = self.config["initiator_name"]
@@ -309,6 +319,7 @@ class MpesaDarajaProvider(BaseProvider):
                     status=ProviderResultStatus.PENDING,
                     provider_transaction_id=provider_transaction_id,
                     provider_reference=response_data.get("ConversationID", ""),
+                    request_payload=request_payload,
                     raw_response=response_data,
                 )
 
@@ -317,6 +328,7 @@ class MpesaDarajaProvider(BaseProvider):
                 provider_transaction_id=provider_transaction_id,
                 failure_code=response_data.get("ResponseCode"),
                 failure_reason=response_data.get("ResponseDescription"),
+                request_payload=request_payload,
                 raw_response=response_data,
             )
 
@@ -326,10 +338,12 @@ class MpesaDarajaProvider(BaseProvider):
                 status=ProviderResultStatus.FAILED,
                 failure_code="http_error",
                 failure_reason=str(exc),
+                request_payload=request_payload,
                 raw_response={},
             )
 
     def query_status(self, *, provider_transaction_id: str, payload: dict) -> ProviderResult:
+        request_payload = None
         try:
             shortcode = self.config["business_shortcode"]
 
@@ -368,6 +382,7 @@ class MpesaDarajaProvider(BaseProvider):
                     status=ProviderResultStatus.PENDING,
                     provider_transaction_id=provider_transaction_id,
                     provider_reference=response_data.get("ConversationID", ""),
+                    request_payload=request_payload,
                     raw_response=response_data,
                 )
 
@@ -376,6 +391,7 @@ class MpesaDarajaProvider(BaseProvider):
                 provider_transaction_id=provider_transaction_id,
                 failure_code=response_data.get("ResponseCode", "unknown"),
                 failure_reason=response_data.get("ResponseDescription", "Status query failed"),
+                request_payload=request_payload,
                 raw_response=response_data,
             )
 
@@ -387,6 +403,7 @@ class MpesaDarajaProvider(BaseProvider):
                 provider_transaction_id=provider_transaction_id,
                 failure_code="http_error",
                 failure_reason=str(exc),
+                request_payload=request_payload,
                 raw_response=getattr(exc.response, "json", dict)(),
             )
 
@@ -398,6 +415,7 @@ class MpesaDarajaProvider(BaseProvider):
                 provider_transaction_id=provider_transaction_id,
                 failure_code="provider_error",
                 failure_reason=str(exc),
+                request_payload=request_payload,
                 raw_response={},
             )
 

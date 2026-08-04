@@ -437,6 +437,7 @@ class InboundPaymentTransaction(BaseModel):
     currency = models.CharField(max_length=3)
     provider_transaction_id = models.CharField(max_length=255, blank=True)
     provider_reference = models.CharField(max_length=255, blank=True)
+    provider_payload = models.JSONField(default=dict)
     request_payload = models.JSONField(default=dict)
     response_payload = models.JSONField(default=dict, blank=True)
     failure_reason = models.TextField(blank=True)
