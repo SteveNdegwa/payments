@@ -79,8 +79,8 @@ class PesaWayProvider(BaseProvider):
             timeout=30,
         )
         response.raise_for_status()
-        data = response.json()
-        token = data.get("access_token") or data.get("token")
+        data = response.json().get("data", {})
+        token = data.get("token")
         if not token:
             raise ValueError("PesaWay token response did not include an access token")
         self._access_token = token
