@@ -172,10 +172,6 @@ class ProviderAccountConfig(BaseModel):
         choices=ValueType.choices,
         default=ValueType.TEXT,
     )
-    is_secret = models.BooleanField(
-        default=False,
-        help_text="Marks credentials and signing secrets so admin displays can mask them.",
-    )
 
     class Meta:
         ordering = ["key"]

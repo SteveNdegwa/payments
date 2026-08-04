@@ -1,6 +1,5 @@
 import hashlib
 
-from django import forms
 from django.contrib import admin, messages
 from django.urls import reverse
 from django.utils import timezone
@@ -550,35 +549,9 @@ class ProviderAdmin(admin.ModelAdmin):
         )
 
 
-class ProviderAccountConfigAdminForm(forms.ModelForm):
-    class Meta:
-        model = ProviderAccountConfig
-        fields = "__all__"
-        widgets = {
-            "value": forms.TextInput(
-                attrs={
-                    "placeholder": "Configuration value",
-                    "size": 60,
-                }
-            )
-        }
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        if self.instance and self.instance.is_secret:
-            self.fields["value"].widget = forms.PasswordInput(
-                render_value=True,
-                attrs={
-                    "placeholder": "Secret configuration value",
-                    "size": 60,
-                },
-            )
-
-
 class ProviderAccountConfigInline(admin.TabularInline):
     model = ProviderAccountConfig
-    form = ProviderAccountConfigAdminForm
-    fields = ["key", "value", "value_type", "is_secret"]
+    fields = ["key", "value", "value_type"]
     extra = 1
     verbose_name = "Configuration item"
     verbose_name_plural = "Configuration — add, edit, or remove items"
