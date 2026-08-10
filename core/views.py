@@ -47,6 +47,36 @@ def initiate_inbound_payment(
     )
 
 
+@require_http_methods(["GET"])
+def inbound_payment_status(
+    request: ExtendedRequest, inbound_payment_id: str
+) -> JsonResponse:
+    inbound_payment = InboundPaymentService.get_inbound_payment(
+        inbound_payment_id=inbound_payment_id,
+        system=request.api_client,
+    )
+    return ResponseProvider.success(
+        message="Inbound payment retrieved",
+        data={
+            "inbound_payment_id": str(inbound_payment.id),
+            "inbound_payment_event": (
+                inbound_payment.inbound_payment_event.slug
+                if inbound_payment.inbound_payment_event
+                else None
+            ),
+            "status": inbound_payment.status,
+            "amount": str(inbound_payment.amount),
+            "currency": inbound_payment.currency,
+            "amount_authorized": str(inbound_payment.amount_authorized),
+            "amount_captured": str(inbound_payment.amount_captured),
+            "amount_refunded": str(inbound_payment.amount_refunded),
+            "amount_settled": str(inbound_payment.amount_settled),
+            "external_reference": inbound_payment.external_reference,
+            "next_action": inbound_payment.next_action,
+        },
+    )
+
+
 @require_http_methods(["POST"])
 def capture_inbound_payment(request: ExtendedRequest, inbound_payment_id: str) -> JsonResponse:
     amount = None

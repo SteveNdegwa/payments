@@ -27,6 +27,11 @@ urlpatterns = [
         views.initiate_inbound_payment,
         name="initiate-inbound-payment",
     ),
+    path(
+        "inbound-payments/<str:inbound_payment_id>/status/",
+        views.inbound_payment_status,
+        name="inbound-payment-status",
+    ),
     # Post-authorization operations
     path(
         "inbound-payments/<str:inbound_payment_id>/capture/",
