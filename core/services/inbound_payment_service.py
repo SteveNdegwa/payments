@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction as db_transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from core.models import (
@@ -28,6 +29,23 @@ logger = logging.getLogger(__name__)
 
 
 class InboundPaymentService:
+    @classmethod
+    def get_inbound_payment(
+        cls,
+        *,
+        inbound_payment_id: str,
+        system: System,
+    ) -> InboundPayment:
+        try:
+            return InboundPayment.objects.select_related("inbound_payment_event").get(
+                Q(system=system) | Q(source_system=system),
+                id=inbound_payment_id,
+            )
+        except InboundPayment.DoesNotExist as err:
+            raise ObjectDoesNotExist(
+                f"Inbound payment '{inbound_payment_id}' not found."
+            ) from err
+
     @classmethod
     def initialize_inbound_payment(
         cls,
