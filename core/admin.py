@@ -1105,17 +1105,16 @@ class OutboundTransferEventAdmin(admin.ModelAdmin):
 @admin.register(OutboundTransfer)
 class OutboundTransferAdmin(admin.ModelAdmin):
     list_display = [
-        "id",
-        "outbound_transfer_event",
+        "__str__",
         "system",
         "source_system",
+        "status_colored",
+        "amount_currency",
+        "outbound_transfer_event",
         "provider",
         "recipient_type",
         "payment_method_type",
-        "status",
-        "amount_currency",
-        "external_reference",
-        "created_at",
+        "created_at_display",
     ]
     list_filter = [
         "status",
@@ -1150,10 +1149,88 @@ class OutboundTransferAdmin(admin.ModelAdmin):
         "id",
     ]
     inlines = [OutboundTransferStateLogInline]
+    date_hierarchy = "created_at"
+    ordering = ["-created_at"]
+
+    fieldsets = (
+        (
+            "Core",
+            {
+                "fields": (
+                    ("system", "source_system"),
+                    "outbound_transfer_event",
+                    ("provider", "provider_account"),
+                    ("recipient_type", "payment_method_type"),
+                    ("amount", "currency"),
+                )
+            },
+        ),
+        ("State", {"fields": ("status",)}),
+        (
+            "References",
+            {
+                "fields": (
+                    "idempotency_key",
+                    "external_reference",
+                    "provider_transaction_id",
+                    "provider_reference",
+                ),
+                "classes": ("wide",),
+            },
+        ),
+        (
+            "Payloads",
+            {
+                "fields": ("provider_payload", "response_payload"),
+                "classes": ("wide", "collapse"),
+            },
+        ),
+        (
+            "Failure",
+            {"fields": ("failure_reason", "failure_code"), "classes": ("collapse",)},
+        ),
+        (
+            "Timing",
+            {
+                "fields": (
+                    "provider_callback_received_at",
+                    "reconciliation_due_at",
+                    "reconciliation_attempts",
+                )
+            },
+        ),
+        (
+            "Audit",
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
+
+    @admin.display(description="Status", ordering="status")
+    def status_colored(self, obj):
+        colors = {
+            OutboundTransfer.Status.SUCCESS: "#28a745",
+            OutboundTransfer.Status.FAILED: "#dc3545",
+            OutboundTransfer.Status.PENDING: "#fd7e14",
+            OutboundTransfer.Status.PROCESSING: "#fd7e14",
+            OutboundTransfer.Status.QUEUED: "#6c757d",
+            OutboundTransfer.Status.MANUAL_REVIEW: "#6f42c1",
+        }
+        return format_html(
+            '<span style="color:{};font-weight:600">{}</span>',
+            colors.get(obj.status, "#6c757d"),
+            obj.get_status_display(),
+        )
 
     @admin.display(description="Amount")
     def amount_currency(self, obj):
         return f"{obj.amount} {obj.currency}"
+
+    @admin.display(description="Created", ordering="created_at")
+    def created_at_display(self, obj):
+        return format_datetime_admin(obj.created_at)
 
     def has_add_permission(self, request):
         return False
@@ -1167,9 +1244,9 @@ class OutboundTransferCallbackLogAdmin(admin.ModelAdmin):
     list_display = [
         "outbound_transfer",
         "provider",
-        "status",
+        "status_colored",
         "parsed_status",
-        "created_at",
+        "created_at_display",
     ]
     list_filter = ["status", "provider", "created_at"]
     search_fields = ["outbound_transfer__id", "processing_error"]
@@ -1186,9 +1263,56 @@ class OutboundTransferCallbackLogAdmin(admin.ModelAdmin):
         "synced",
         "id",
     ]
+    date_hierarchy = "created_at"
+    ordering = ["-created_at"]
+
+    fieldsets = (
+        (
+            "Provider and outbound transfer",
+            {"fields": ("provider", "outbound_transfer")},
+        ),
+        (
+            "Payload",
+            {
+                "fields": ("raw_headers", "raw_payload"),
+                "classes": ("wide",),
+            },
+        ),
+        (
+            "Processing",
+            {"fields": ("status", "parsed_status", "processing_error")},
+        ),
+        (
+            "Audit",
+            {
+                "fields": ("created_at", "updated_at", "synced", "id"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
 
     def has_add_permission(self, request):
         return False
+
+    @admin.display(description="Status", ordering="status")
+    def status_colored(self, obj):
+        colors = {
+            OutboundTransferCallbackLog.Status.RECEIVED: "#6c757d",
+            OutboundTransferCallbackLog.Status.PROCESSING: "#007bff",
+            OutboundTransferCallbackLog.Status.PROCESSED: "#28a745",
+            OutboundTransferCallbackLog.Status.FAILED: "#dc3545",
+            OutboundTransferCallbackLog.Status.REJECTED: "#dc3545",
+            OutboundTransferCallbackLog.Status.IGNORED: "#fd7e14",
+        }
+        return format_html(
+            '<span style="color:{}; font-weight:bold;">{}</span>',
+            colors.get(obj.status, "#6c757d"),
+            obj.get_status_display(),
+        )
+
+    @admin.display(description="Created", ordering="created_at")
+    def created_at_display(self, obj):
+        return format_datetime_admin(obj.created_at)
 
 
 @admin.register(LedgerAccount)

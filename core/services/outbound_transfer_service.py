@@ -270,7 +270,11 @@ class OutboundTransferService:
 
         with db_transaction.atomic():
             transfer = (
-                OutboundTransfer.objects.select_for_update()
+                # The ledger-account relations below are nullable, so their
+                # select_related joins are outer joins. PostgreSQL cannot lock
+                # the nullable side of an outer join; only the transfer itself
+                # needs to be locked while its state and postings are updated.
+                OutboundTransfer.objects.select_for_update(of=("self",))
                 .select_related(
                     "provider",
                     "payment_method_type",
