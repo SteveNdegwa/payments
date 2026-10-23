@@ -14,6 +14,7 @@ from core.models import (
     OutboundTransfer,
     OutboundTransferCallbackLog,
     OutboundTransferEvent,
+    OutboundTransferEventProviderConfig,
     OutboundTransferStateLog,
     ProviderAccount,
     System,
@@ -36,8 +37,10 @@ class OutboundTransferService:
         provider_payload: dict,
         external_reference: str | None,
         idempotency_key: str,
+        organization_remote_code: str | None = None,
     ) -> OutboundTransfer:
         idempotency_key = str(idempotency_key)
+        organization_remote_code = cls._normalize_organization_remote_code(organization_remote_code)
         if not amount.is_finite() or amount <= 0:
             raise ValidationError("Transfer amount must be greater than zero.")
         if not idempotency_key:
@@ -52,8 +55,12 @@ class OutboundTransferService:
             system,
             outbound_transfer_event_slug,
         )
-        provider = event.provider
-        account = event.provider_account
+        event_provider_config = cls._resolve_event_provider_config(
+            event,
+            organization_remote_code,
+        )
+        provider = event_provider_config.provider
+        account = event_provider_config.provider_account
         payment_method = event.payment_method_type
         currency = event.currency.upper()
 
@@ -73,6 +80,14 @@ class OutboundTransferService:
             raise OutboundTransferError(
                 "Provider account configured for outbound transfer event "
                 f"'{event.slug}' is inactive."
+            )
+        if (
+            account.organization_remote_code
+            and account.organization_remote_code != event_provider_config.organization_remote_code
+        ):
+            raise OutboundTransferError(
+                f"Outbound transfer event '{event.slug}' uses a provider account scoped to a "
+                "different organization."
             )
         if not provider.payment_method_types.filter(id=payment_method.id).exists():
             raise OutboundTransferError(
@@ -98,8 +113,12 @@ class OutboundTransferService:
                 defaults={
                     "system": system,
                     "outbound_transfer_event": event,
+                    "outbound_transfer_event_provider_config": event_provider_config,
                     "provider": provider,
                     "provider_account": account,
+                    "provider_config_snapshot": event_provider_config.build_snapshot(
+                        organization_remote_code
+                    ),
                     "recipient_type": event.recipient_type,
                     "payment_method_type": payment_method,
                     "amount": amount,
@@ -113,6 +132,7 @@ class OutboundTransferService:
                 cls._validate_idempotent_replay(
                     transfer,
                     event=event,
+                    event_provider_config=event_provider_config,
                     amount=amount,
                     provider_payload=normalized_provider_payload,
                     external_reference=reference,
@@ -172,12 +192,14 @@ class OutboundTransferService:
         transfer: OutboundTransfer,
         *,
         event: OutboundTransferEvent,
+        event_provider_config: OutboundTransferEventProviderConfig,
         amount: Decimal,
         provider_payload: dict,
         external_reference: str,
     ) -> None:
         matches = (
             transfer.outbound_transfer_event_id == event.id
+            and transfer.outbound_transfer_event_provider_config_id == event_provider_config.id
             and transfer.amount == amount
             and transfer.provider_payload == provider_payload
             and transfer.external_reference == external_reference
@@ -214,8 +236,8 @@ class OutboundTransferService:
             transfer.save(update_fields=["reconciliation_due_at"])
 
         provider = get_provider_instance(
-            class_name=transfer.provider.class_name,
-            config=transfer.provider_account.get_config(),
+            class_name=transfer.get_provider_class_name(),
+            config=transfer.get_provider_account_config(),
         )
         payload = {
             **transfer.provider_payload,
@@ -467,8 +489,8 @@ class OutboundTransferService:
             return
 
         provider = get_provider_instance(
-            class_name=log.provider.class_name,
-            config=transfer.provider_account.get_config(),
+            class_name=transfer.get_provider_class_name(),
+            config=transfer.get_provider_account_config(),
         )
         if not provider.callback_verification_supported:
             log.status = OutboundTransferCallbackLog.Status.IGNORED
@@ -542,9 +564,6 @@ class OutboundTransferService:
         try:
             return OutboundTransferEvent.objects.select_related(
                 "system",
-                "provider",
-                "provider_account__outbound_transfer_debit_account",
-                "provider_account__outbound_transfer_credit_account",
                 "payment_method_type",
             ).get(
                 system=system,
@@ -555,3 +574,53 @@ class OutboundTransferService:
             raise ObjectDoesNotExist(
                 f"Active outbound transfer event '{slug}' not found for system '{system.name}'."
             ) from exc
+
+    @staticmethod
+    def _normalize_organization_remote_code(value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValidationError("organization_remote_code must be a string.")
+        value = value.strip()
+        if not value:
+            return None
+        if len(value) > 40:
+            raise ValidationError("organization_remote_code cannot exceed 40 characters.")
+        return value
+
+    @classmethod
+    def _resolve_event_provider_config(
+        cls,
+        event: OutboundTransferEvent,
+        organization_remote_code: str | None,
+    ) -> OutboundTransferEventProviderConfig:
+        configs = event.provider_configs.select_related(
+            "provider",
+            "provider_account__outbound_transfer_debit_account",
+            "provider_account__outbound_transfer_credit_account",
+        )
+        if organization_remote_code:
+            override = (
+                configs.filter(organization_remote_code=organization_remote_code)
+                .order_by("-is_active")
+                .first()
+            )
+            if override:
+                if not override.is_active:
+                    raise OutboundTransferError(
+                        "The provider override for organization "
+                        f"'{organization_remote_code}' and outbound transfer event "
+                        f"'{event.slug}' is inactive."
+                    )
+                return override
+
+        global_config = configs.filter(
+            organization_remote_code__isnull=True,
+            is_active=True,
+        ).first()
+        if not global_config:
+            raise OutboundTransferError(
+                f"Outbound transfer event '{event.slug}' has no active global provider "
+                "configuration."
+            )
+        return global_config

@@ -189,8 +189,8 @@ def task_reconcile_outbound_transfer(self, outbound_transfer_id: str):
         return
 
     provider = get_provider_instance(
-        class_name=transfer.provider.class_name,
-        config=transfer.provider_account.get_config(),
+        class_name=transfer.get_provider_class_name(),
+        config=transfer.get_provider_account_config(),
     )
     result = provider.query_status(
         provider_transaction_id=transfer.provider_transaction_id,
@@ -437,10 +437,9 @@ def task_reconcile_inbound_payment_transaction(self, inbound_payment_transaction
         inbound_payment_transaction=inbound_payment_transaction
     )
 
-    provider_account = inbound_payment_transaction.provider_account
     provider_instance = get_provider_instance(
-        class_name=provider_account.provider.class_name,
-        config=provider_account.get_config(),
+        class_name=inbound_payment_transaction.inbound_payment.get_provider_class_name(),
+        config=inbound_payment_transaction.inbound_payment.get_provider_account_config(),
     )
 
     base_url = settings.BASE_URL

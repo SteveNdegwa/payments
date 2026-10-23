@@ -102,7 +102,8 @@ class InboundPaymentTransactionExecutor:
     ):
         self.inbound_payment = inbound_payment
         self.operation_type = operation_type
-        self.provider_account = inbound_payment.inbound_payment_event.provider_account
+        self.provider_config = inbound_payment.inbound_payment_event_provider_config
+        self.provider_account = self.provider_config.provider_account
         self.amount = amount
         self.provider_payload = provider_payload
         self.actor = actor
@@ -157,10 +158,9 @@ class InboundPaymentTransactionExecutor:
         return txn
 
     def _load_provider(self) -> BaseProvider:
-        pa = self.provider_account
         return get_provider_instance(
-            class_name=pa.provider.class_name,
-            config=pa.get_config(),
+            class_name=self.inbound_payment.get_provider_class_name(),
+            config=self.inbound_payment.get_provider_account_config(),
         )
 
     def _call_provider(

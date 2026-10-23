@@ -419,20 +419,6 @@ class MpesaDarajaProvider(BaseProvider):
                 raw_response={},
             )
 
-    def verify_callback(self, *, headers: dict, payload: dict) -> bool:
-        source_ip = payload.get("_source_ip")
-        allowed_networks = self.config.get("callback_allowed_ips", [])
-        if not source_ip or not allowed_networks:
-            return False
-        try:
-            address = ipaddress.ip_address(source_ip)
-            return any(
-                address in ipaddress.ip_network(network, strict=False)
-                for network in allowed_networks
-            )
-        except ValueError:
-            return False
-
     @staticmethod
     def _result_parameter(result: dict, key: str) -> str:
         parameters = result.get("ResultParameters", {}).get("ResultParameter", [])

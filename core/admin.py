@@ -10,6 +10,7 @@ from .models import (
     InboundPayment,
     InboundPaymentCallbackLog,
     InboundPaymentEvent,
+    InboundPaymentEventProviderConfig,
     InboundPaymentMethodToken,
     InboundPaymentReconciliation,
     InboundPaymentTransaction,
@@ -19,11 +20,13 @@ from .models import (
     OutboundTransfer,
     OutboundTransferCallbackLog,
     OutboundTransferEvent,
+    OutboundTransferEventProviderConfig,
     OutboundTransferStateLog,
     PaymentMethodType,
     Provider,
     ProviderAccount,
     ProviderAccountConfig,
+    ProviderConfigDefinition,
     System,
     WebhookDeliveryLog,
     WebhookOutbox,
@@ -471,6 +474,21 @@ class PaymentMethodTypeAdmin(admin.ModelAdmin):
         )
 
 
+class ProviderConfigDefinitionInline(admin.TabularInline):
+    model = ProviderConfigDefinition
+    fields = [
+        "name",
+        "key",
+        "value_type",
+        "description",
+        "is_required",
+        "is_secret",
+    ]
+    extra = 1
+    verbose_name = "Configuration definition"
+    verbose_name_plural = "Configuration definitions used by organization setup APIs"
+
+
 @admin.register(Provider)
 class ProviderAdmin(admin.ModelAdmin):
     list_display = [
@@ -492,6 +510,7 @@ class ProviderAdmin(admin.ModelAdmin):
     search_fields = ["name", "slug", "class_name"]
     readonly_fields = ["created_at", "updated_at", "synced", "id"]
     ordering = ["name"]
+    inlines = [ProviderConfigDefinitionInline]
 
     fieldsets = (
         (
@@ -557,10 +576,31 @@ class ProviderAccountConfigInline(admin.TabularInline):
     verbose_name_plural = "Configuration — add, edit, or remove items"
 
 
+class InboundEventConfigForProviderAccountInline(admin.TabularInline):
+    model = InboundPaymentEventProviderConfig
+    fk_name = "provider_account"
+    fields = ["inbound_payment_event", "organization_remote_code", "provider", "is_active"]
+    extra = 0
+    show_change_link = True
+    verbose_name = "Inbound event routing"
+    verbose_name_plural = "Inbound event routing configurations"
+
+
+class OutboundEventConfigForProviderAccountInline(admin.TabularInline):
+    model = OutboundTransferEventProviderConfig
+    fk_name = "provider_account"
+    fields = ["outbound_transfer_event", "organization_remote_code", "provider", "is_active"]
+    extra = 0
+    show_change_link = True
+    verbose_name = "Outbound event routing"
+    verbose_name_plural = "Outbound event routing configurations"
+
+
 @admin.register(ProviderAccount)
 class ProviderAccountAdmin(admin.ModelAdmin):
     list_display = [
         "__str__",
+        "organization_remote_code",
         "environment",
         "balance_display",
         "is_default_colored",
@@ -568,7 +608,7 @@ class ProviderAccountAdmin(admin.ModelAdmin):
         "created_at_display",
     ]
     list_filter = ["environment", "is_default", "is_active", "provider"]
-    search_fields = ["name", "provider__name"]
+    search_fields = ["name", "organization_remote_code", "provider__name"]
     readonly_fields = [
         "provider_available_balance",
         "balance_currency",
@@ -579,7 +619,11 @@ class ProviderAccountAdmin(admin.ModelAdmin):
         "id",
     ]
     ordering = ["-is_default", "provider__name", "name"]
-    inlines = [ProviderAccountConfigInline]
+    inlines = [
+        ProviderAccountConfigInline,
+        InboundEventConfigForProviderAccountInline,
+        OutboundEventConfigForProviderAccountInline,
+    ]
 
     fieldsets = (
         (
@@ -588,6 +632,7 @@ class ProviderAccountAdmin(admin.ModelAdmin):
                 "fields": (
                     "provider",
                     "name",
+                    "organization_remote_code",
                     "environment",
                     "is_default",
                     "is_active",
@@ -649,22 +694,36 @@ class ProviderAccountAdmin(admin.ModelAdmin):
         return format_datetime_admin(obj.created_at)
 
 
+class InboundPaymentEventProviderConfigInline(admin.TabularInline):
+    model = InboundPaymentEventProviderConfig
+    fields = [
+        "organization_remote_code",
+        "provider",
+        "provider_account",
+        "is_active",
+    ]
+    extra = 1
+    show_change_link = True
+    verbose_name = "Provider routing configuration"
+    verbose_name_plural = "Provider routing configurations and organization overrides"
+
+
 @admin.register(InboundPaymentEvent)
 class InboundPaymentEventAdmin(admin.ModelAdmin):
     list_display = [
         "__str__",
         "system",
-        "provider",
         "flow",
         "currency",
         "fixed_amount",
         "callback_destination",
         "is_active_colored",
     ]
-    list_filter = ["system", "provider", "flow", "currency", "is_active"]
-    search_fields = ["name", "slug", "system__slug", "provider__name"]
+    list_filter = ["system", "flow", "currency", "is_active"]
+    search_fields = ["name", "slug", "system__slug", "provider_configs__provider__name"]
     readonly_fields = ["created_at", "updated_at", "synced", "id"]
     ordering = ["-created_at"]
+    inlines = [InboundPaymentEventProviderConfigInline]
 
     fieldsets = (
         ("Identity", {"fields": ("system", "name", "slug", "description")}),
@@ -672,12 +731,15 @@ class InboundPaymentEventAdmin(admin.ModelAdmin):
             "Processing",
             {
                 "fields": (
-                    "provider",
-                    "provider_account",
                     "flow",
                     "auto_capture",
                     "capture_delay_hours",
-                )
+                ),
+                "description": (
+                    "Configure the global provider route and optional organization overrides "
+                    "below. An inactive organization override blocks initiation for that "
+                    "organization."
+                ),
             },
         ),
         ("Amount", {"fields": ("fixed_amount", "currency")}),
@@ -790,6 +852,7 @@ class InboundPaymentAdmin(admin.ModelAdmin):
         "amount_captured",
         "amount_refunded",
         "amount_settled",
+        "provider_config_snapshot",
     ]
     inlines = [InboundPaymentTransactionInline]
     date_hierarchy = "created_at"
@@ -802,6 +865,7 @@ class InboundPaymentAdmin(admin.ModelAdmin):
                 "fields": (
                     ("system", "source_system"),
                     "inbound_payment_event",
+                    "inbound_payment_event_provider_config",
                     "payment_method_token",
                     ("amount", "currency"),
                 )
@@ -824,6 +888,10 @@ class InboundPaymentAdmin(admin.ModelAdmin):
                 "fields": ("idempotency_key", "external_reference", "provider_payload"),
                 "classes": ("wide",),
             },
+        ),
+        (
+            "Configuration snapshot",
+            {"fields": ("provider_config_snapshot",), "classes": ("collapse",)},
         ),
         ("Metadata", {"fields": ("metadata",), "classes": ("collapse",)}),
         (
@@ -1044,12 +1112,24 @@ class OutboundTransferForEventInline(admin.TabularInline):
         return False
 
 
+class OutboundTransferEventProviderConfigInline(admin.TabularInline):
+    model = OutboundTransferEventProviderConfig
+    fields = [
+        "organization_remote_code",
+        "provider",
+        "provider_account",
+        "is_active",
+    ]
+    extra = 1
+    show_change_link = True
+    verbose_name = "Provider routing configuration"
+    verbose_name_plural = "Provider routing configurations and organization overrides"
+
+
 @admin.register(OutboundTransferEvent)
 class OutboundTransferEventAdmin(admin.ModelAdmin):
     list_display = [
         "__str__",
-        "provider",
-        "provider_account",
         "recipient_type",
         "payment_method_type",
         "currency",
@@ -1058,32 +1138,29 @@ class OutboundTransferEventAdmin(admin.ModelAdmin):
     ]
     list_filter = [
         "system",
-        "provider",
         "recipient_type",
         "payment_method_type",
         "currency",
         "callback_destination",
         "is_active",
     ]
-    search_fields = ["name", "slug", "system__slug", "provider__name"]
+    search_fields = ["name", "slug", "system__slug", "provider_configs__provider__name"]
     readonly_fields = ["created_at", "updated_at", "synced", "id"]
     ordering = ["system__name", "name"]
-    inlines = [OutboundTransferForEventInline]
+    inlines = [OutboundTransferEventProviderConfigInline, OutboundTransferForEventInline]
     fieldsets = (
         ("Identity", {"fields": ("system", "name", "slug", "description")}),
         (
             "Routing",
             {
                 "fields": (
-                    "provider",
-                    "provider_account",
                     "recipient_type",
                     "payment_method_type",
                     "currency",
                 ),
                 "description": (
-                    "These values are selected by the event and cannot be overridden "
-                    "by API callers."
+                    "Recipient type, payment method, and currency are selected by the event. "
+                    "Configure global and organization-specific provider routes below."
                 ),
             },
         ),
@@ -1143,6 +1220,7 @@ class OutboundTransferAdmin(admin.ModelAdmin):
         "provider_callback_received_at",
         "reconciliation_due_at",
         "reconciliation_attempts",
+        "provider_config_snapshot",
         "created_at",
         "updated_at",
         "synced",
@@ -1159,6 +1237,7 @@ class OutboundTransferAdmin(admin.ModelAdmin):
                 "fields": (
                     ("system", "source_system"),
                     "outbound_transfer_event",
+                    "outbound_transfer_event_provider_config",
                     ("provider", "provider_account"),
                     ("recipient_type", "payment_method_type"),
                     ("amount", "currency"),
@@ -1184,6 +1263,10 @@ class OutboundTransferAdmin(admin.ModelAdmin):
                 "fields": ("provider_payload", "response_payload"),
                 "classes": ("wide", "collapse"),
             },
+        ),
+        (
+            "Configuration snapshot",
+            {"fields": ("provider_config_snapshot",), "classes": ("collapse",)},
         ),
         (
             "Failure",
