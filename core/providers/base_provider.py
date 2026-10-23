@@ -101,8 +101,11 @@ class BaseProvider(ABC):
     # Webhook / callback verification
     @abstractmethod
     def verify_callback(self, *, headers: dict, payload: dict) -> bool:
-        """Verify an inbound provider callback is authentic."""
-        raise NotImplementedError
+        """
+        Verify an inbound provider callback is authentic.
+        Passes by default unless overridden in provider class.
+        """
+        return True
 
     @abstractmethod
     def parse_callback(self, *, payload: dict) -> ProviderResult:

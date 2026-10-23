@@ -12,6 +12,7 @@ from core.models import (
     InboundPayment,
     InboundPaymentCallbackLog,
     InboundPaymentEvent,
+    InboundPaymentEventProviderConfig,
     InboundPaymentMethodToken,
     InboundPaymentReconciliation,
     InboundPaymentTransaction,
@@ -42,9 +43,7 @@ class InboundPaymentService:
                 id=inbound_payment_id,
             )
         except InboundPayment.DoesNotExist as err:
-            raise ObjectDoesNotExist(
-                f"Inbound payment '{inbound_payment_id}' not found."
-            ) from err
+            raise ObjectDoesNotExist(f"Inbound payment '{inbound_payment_id}' not found.") from err
 
     @classmethod
     def initialize_inbound_payment(
@@ -60,11 +59,18 @@ class InboundPaymentService:
         payment_method_token_id: str | None = None,
         external_reference: str | None = None,
         idempotency_key: str | None = None,
+        organization_remote_code: str | None = None,
     ) -> InboundPayment:
         idempotency_key = idempotency_key or str(uuid.uuid4())
+        organization_remote_code = cls._normalize_organization_remote_code(organization_remote_code)
 
         system = cls._get_system(system_slug)
         event = cls._get_inbound_payment_event(system, inbound_payment_event_slug)
+        event_provider_config = cls._resolve_event_provider_config(
+            event,
+            organization_remote_code,
+        )
+        cls._validate_event_provider_config(event, event_provider_config)
 
         resolved_amount = amount or event.fixed_amount
         resolved_currency = currency or event.currency
@@ -93,6 +99,11 @@ class InboundPaymentService:
                 raise ObjectDoesNotExist(
                     f"Payment method token '{payment_method_token_id}' not found."
                 ) from err
+            if token.provider_id != event_provider_config.provider_id:
+                raise ValidationError(
+                    "Payment method token belongs to a different provider than the selected "
+                    "event configuration."
+                )
 
         with db_transaction.atomic():
             inbound_payment, created = InboundPayment.objects.get_or_create(
@@ -101,6 +112,10 @@ class InboundPaymentService:
                 defaults={
                     "source_system": source_system,
                     "inbound_payment_event": event,
+                    "inbound_payment_event_provider_config": event_provider_config,
+                    "provider_config_snapshot": event_provider_config.build_snapshot(
+                        organization_remote_code
+                    ),
                     "payment_method_token": token,
                     "amount": resolved_amount,
                     "currency": resolved_currency,
@@ -112,6 +127,11 @@ class InboundPaymentService:
             )
 
         if not created:
+            if inbound_payment.inbound_payment_event_provider_config_id != event_provider_config.id:
+                raise ValidationError(
+                    "idempotency_key was already used with a different organization provider "
+                    "configuration."
+                )
             return inbound_payment
 
         cls._queue_initial_operation(inbound_payment)
@@ -440,8 +460,6 @@ class InboundPaymentService:
     @classmethod
     def process_callback(cls, log: InboundPaymentCallbackLog) -> None:
         inbound_payment_transaction = log.inbound_payment_transaction
-        provider = log.provider
-        account = inbound_payment_transaction.provider_account
 
         if inbound_payment_transaction.is_terminal:
             log.status = InboundPaymentCallbackLog.Status.IGNORED
@@ -453,8 +471,8 @@ class InboundPaymentService:
             return
 
         provider_instance = get_provider_instance(
-            class_name=provider.class_name,
-            config=account.get_config(),
+            class_name=inbound_payment_transaction.inbound_payment.get_provider_class_name(),
+            config=inbound_payment_transaction.inbound_payment.get_provider_account_config(),
         )
 
         if not provider_instance.verify_callback(headers=log.raw_headers, payload=log.raw_payload):
@@ -654,8 +672,8 @@ class InboundPaymentService:
         try:
             inbound_payment = InboundPayment.objects.select_related(
                 "system",
-                "inbound_payment_event__provider",
-                "inbound_payment_event__provider_account",
+                "inbound_payment_event_provider_config__provider",
+                "inbound_payment_event_provider_config__provider_account",
             ).get(id=inbound_payment_id)
         except InboundPayment.DoesNotExist as err:
             raise ObjectDoesNotExist(f"Inbound payment '{inbound_payment_id}' not found.") from err
@@ -676,7 +694,7 @@ class InboundPaymentService:
         inbound_payment: InboundPayment,
         capability: str,
     ) -> None:
-        provider = inbound_payment.inbound_payment_event.provider
+        provider = inbound_payment.inbound_payment_event_provider_config.provider
         if not getattr(provider, capability, False):
             raise InboundPaymentError(
                 f"Provider '{provider.name}' does not support '{capability}'."
@@ -790,10 +808,77 @@ class InboundPaymentService:
     @classmethod
     def _get_inbound_payment_event(cls, system: System, slug: str) -> InboundPaymentEvent:
         try:
-            return InboundPaymentEvent.objects.select_related("provider", "provider_account").get(
-                system=system, slug=slug, is_active=True
-            )
+            return InboundPaymentEvent.objects.get(system=system, slug=slug, is_active=True)
         except InboundPaymentEvent.DoesNotExist as err:
             raise ObjectDoesNotExist(
                 f"Active inbound payment event '{slug}' not found for system '{system.name}'."
             ) from err
+
+    @staticmethod
+    def _normalize_organization_remote_code(value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValidationError("organization_remote_code must be a string.")
+        value = value.strip()
+        if not value:
+            return None
+        if len(value) > 40:
+            raise ValidationError("organization_remote_code cannot exceed 40 characters.")
+        return value
+
+    @classmethod
+    def _resolve_event_provider_config(
+        cls,
+        event: InboundPaymentEvent,
+        organization_remote_code: str | None,
+    ) -> InboundPaymentEventProviderConfig:
+        configs = event.provider_configs.select_related("provider", "provider_account")
+        if organization_remote_code:
+            override = (
+                configs.filter(organization_remote_code=organization_remote_code)
+                .order_by("-is_active")
+                .first()
+            )
+            if override:
+                if not override.is_active:
+                    raise InboundPaymentError(
+                        "The provider override for organization "
+                        f"'{organization_remote_code}' and inbound payment event "
+                        f"'{event.slug}' is inactive."
+                    )
+                return override
+
+        global_config = configs.filter(
+            organization_remote_code__isnull=True,
+            is_active=True,
+        ).first()
+        if not global_config:
+            raise InboundPaymentError(
+                f"Inbound payment event '{event.slug}' has no active global provider configuration."
+            )
+        return global_config
+
+    @staticmethod
+    def _validate_event_provider_config(
+        event: InboundPaymentEvent,
+        config: InboundPaymentEventProviderConfig,
+    ) -> None:
+        if not config.provider.is_active:
+            raise InboundPaymentError(
+                f"Provider configured for inbound payment event '{event.slug}' is inactive."
+            )
+        if config.provider_account.provider_id != config.provider_id:
+            raise InboundPaymentError(
+                f"Inbound payment event '{event.slug}' has a provider account mismatch."
+            )
+        if not config.provider_account.is_active:
+            raise InboundPaymentError(
+                f"Provider account configured for inbound payment event '{event.slug}' is inactive."
+            )
+        account_remote_code = config.provider_account.organization_remote_code
+        if account_remote_code and account_remote_code != config.organization_remote_code:
+            raise InboundPaymentError(
+                f"Inbound payment event '{event.slug}' uses a provider account scoped to a "
+                "different organization."
+            )

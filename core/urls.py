@@ -5,6 +5,29 @@ from core import views
 app_name = "core"
 
 urlpatterns = [
+    # Provider configuration
+    path("providers/", views.provider_list, name="provider-list"),
+    path("providers/<slug:provider_slug>/", views.provider_detail, name="provider-detail"),
+    path(
+        "organization-overrides/",
+        views.organization_override_list,
+        name="organization-override-list",
+    ),
+    path(
+        "organization-overrides/create/",
+        views.create_organization_override,
+        name="organization-override-create",
+    ),
+    path(
+        "organization-provider-configs/",
+        views.organization_provider_config_list,
+        name="organization-provider-config-list",
+    ),
+    path(
+        "organization-provider-configs/<str:config_id>/",
+        views.organization_provider_config_detail,
+        name="organization-provider-config-detail",
+    ),
     # Outbound transfers
     path(
         "outbound-transfers/<str:system_slug>/<str:outbound_transfer_event_slug>/initiate/",

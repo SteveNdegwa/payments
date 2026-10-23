@@ -5,6 +5,7 @@ from django.views.decorators.http import require_http_methods
 
 from core.services.inbound_payment_service import InboundPaymentService
 from core.services.outbound_transfer_service import OutboundTransferService
+from core.services.provider_configuration_service import ProviderConfigurationService
 from utils.extended_request import ExtendedRequest
 from utils.response_provider import ResponseProvider
 
@@ -33,6 +34,7 @@ def initiate_inbound_payment(
         provider_payload=request.data.get("provider_payload"),
         external_reference=request.data.get("external_reference"),
         idempotency_key=request.data.get("idempotency_key"),
+        organization_remote_code=request.data.get("organization_remote_code"),
     )
 
     return ResponseProvider.success(
@@ -48,9 +50,7 @@ def initiate_inbound_payment(
 
 
 @require_http_methods(["GET"])
-def inbound_payment_status(
-    request: ExtendedRequest, inbound_payment_id: str
-) -> JsonResponse:
+def inbound_payment_status(request: ExtendedRequest, inbound_payment_id: str) -> JsonResponse:
     inbound_payment = InboundPaymentService.get_inbound_payment(
         inbound_payment_id=inbound_payment_id,
         system=request.api_client,
@@ -169,6 +169,7 @@ def initiate_outbound_transfer(
         provider_payload=request.data.get("provider_payload") or {},
         external_reference=request.data.get("external_reference"),
         idempotency_key=request.data.get("idempotency_key", ""),
+        organization_remote_code=request.data.get("organization_remote_code"),
     )
     return ResponseProvider.accepted(
         message="Outbound transfer queued",
@@ -223,3 +224,66 @@ def outbound_transfer_callback(
         raw_payload=callback_payload,
     )
     return ResponseProvider.success(message="Received")
+
+
+@require_http_methods(["GET"])
+def provider_list(request: ExtendedRequest) -> JsonResponse:
+    providers = ProviderConfigurationService.list_providers(
+        payment_method_type=request.GET.get("payment_method_type")
+    )
+    return ResponseProvider.success(data={"providers": providers})
+
+
+@require_http_methods(["GET"])
+def provider_detail(request: ExtendedRequest, provider_slug: str) -> JsonResponse:
+    provider = ProviderConfigurationService.get_provider(provider_slug)
+    return ResponseProvider.success(data={"provider": provider})
+
+
+@require_http_methods(["GET"])
+def organization_override_list(request: ExtendedRequest) -> JsonResponse:
+    overrides = ProviderConfigurationService.list_organization_overrides(
+        system=request.api_client,
+        organization_remote_code=request.GET.get("organization_remote_code"),
+        event_type=request.GET.get("event_type"),
+        event_slug=request.GET.get("event_slug"),
+    )
+    return ResponseProvider.success(data={"overrides": overrides})
+
+
+@require_http_methods(["POST"])
+def create_organization_override(request: ExtendedRequest) -> JsonResponse:
+    result = ProviderConfigurationService.create_organization_override(
+        system=request.api_client,
+        event_slug=request.data.get("event_slug", ""),
+        event_type=request.data.get("event_type"),
+        organization_remote_code=request.data.get("organization_remote_code"),
+        provider_slug=request.data.get("provider_slug", ""),
+        configs=request.data.get("configs"),
+    )
+    return ResponseProvider.created(
+        message="Organization provider override created",
+        data=result,
+    )
+
+
+@require_http_methods(["GET"])
+def organization_provider_config_list(request: ExtendedRequest) -> JsonResponse:
+    configs = ProviderConfigurationService.list_organization_provider_configs(
+        system=request.api_client,
+        organization_remote_code=request.GET.get("organization_remote_code"),
+    )
+    return ResponseProvider.success(data={"provider_configs": configs})
+
+
+@require_http_methods(["GET"])
+def organization_provider_config_detail(
+    request: ExtendedRequest,
+    config_id: str,
+) -> JsonResponse:
+    config = ProviderConfigurationService.get_organization_provider_config(
+        system=request.api_client,
+        config_id=config_id,
+        organization_remote_code=request.GET.get("organization_remote_code"),
+    )
+    return ResponseProvider.success(data={"provider_config": config})

@@ -94,6 +94,16 @@ class ProviderAccount(BaseModel):
 
     provider = models.ForeignKey(Provider, on_delete=models.PROTECT, related_name="accounts")
     name = models.CharField(max_length=255)
+    organization_remote_code = models.SlugField(
+        max_length=40,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=(
+            "Optional organization remote code that owns this account. Leave blank for an "
+            "account that can be used by any organization."
+        ),
+    )
     environment = models.CharField(
         max_length=20,
         choices=Environment.choices,
@@ -148,11 +158,59 @@ class ProviderAccount(BaseModel):
         return {entry.key: entry.typed_value for entry in self.config_entries.all()}
 
 
+class ProviderConfigDefinition(BaseModel):
+    class ValueType(models.TextChoices):
+        TEXT = "TEXT", "Text"
+        BOOLEAN = "BOOLEAN", "Yes / No"
+        INTEGER = "INTEGER", "Whole number"
+        DECIMAL = "DECIMAL", "Decimal number"
+        JSON = "JSON", "JSON object or list"
+
+    provider = models.ForeignKey(
+        Provider,
+        on_delete=models.CASCADE,
+        related_name="config_definitions",
+    )
+    name = models.CharField(max_length=255)
+    key = models.CharField(max_length=100)
+    value_type = models.CharField(
+        max_length=20,
+        choices=ValueType.choices,
+        default=ValueType.TEXT,
+    )
+    description = models.TextField(blank=True)
+    is_required = models.BooleanField(
+        default=True,
+        help_text="Require this key when an organization provider account is created via API.",
+    )
+    is_secret = models.BooleanField(
+        default=False,
+        help_text="Marks credentials and other values that should be treated as sensitive.",
+    )
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "name"],
+                name="unique_provider_config_definition_name",
+            ),
+            models.UniqueConstraint(
+                fields=["provider", "key"],
+                name="unique_provider_config_definition_key",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.provider.name}: {self.name}"
+
+
 class ProviderAccountConfig(BaseModel):
     class ValueType(models.TextChoices):
         TEXT = "TEXT", "Text"
         BOOLEAN = "BOOLEAN", "Yes / No"
         INTEGER = "INTEGER", "Whole number"
+        DECIMAL = "DECIMAL", "Decimal number"
         JSON = "JSON", "JSON object or list"
 
     provider_account = models.ForeignKey(
@@ -203,9 +261,74 @@ class ProviderAccountConfig(BaseModel):
             return normalized in {"1", "true", "yes", "on"}
         if self.value_type == self.ValueType.INTEGER:
             return int(self.value)
+        if self.value_type == self.ValueType.DECIMAL:
+            return float(self.value)
         if self.value_type == self.ValueType.JSON:
             return json.loads(self.value)
         return self.value
+
+
+class EventProviderConfigBase(BaseModel):
+    organization_remote_code = models.SlugField(
+        max_length=40,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=(
+            "Organization remote code for this override. Leave blank to make this the global "
+            "fallback configuration."
+        ),
+    )
+    provider = models.ForeignKey(Provider, on_delete=models.PROTECT)
+    provider_account = models.ForeignKey(ProviderAccount, on_delete=models.PROTECT)
+    is_active = models.BooleanField(
+        default=True,
+        help_text=(
+            "Inactive organization overrides block initiation for that organization instead "
+            "of falling back to the global configuration."
+        ),
+    )
+
+    class Meta:
+        abstract = True
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if (
+            self.provider_account_id
+            and self.provider_id
+            and self.provider_account.provider_id != self.provider_id
+        ):
+            errors["provider_account"] = "Provider account must belong to the selected provider."
+        account_remote_code = (
+            self.provider_account.organization_remote_code if self.provider_account_id else None
+        )
+        if account_remote_code and account_remote_code != self.organization_remote_code:
+            errors["provider_account"] = (
+                "An organization-scoped provider account can only be used by a matching "
+                "organization override."
+            )
+        if errors:
+            raise ValidationError(errors)
+
+    def build_snapshot(self, requested_organization_remote_code: str | None) -> dict:
+        return {
+            "event_provider_config_id": str(self.id),
+            "requested_organization_remote_code": requested_organization_remote_code,
+            "configured_organization_remote_code": self.organization_remote_code,
+            "provider": {
+                "id": str(self.provider_id),
+                "slug": self.provider.slug,
+                "class_name": self.provider.class_name,
+            },
+            "provider_account": {
+                "id": str(self.provider_account_id),
+                "name": self.provider_account.name,
+                "organization_remote_code": self.provider_account.organization_remote_code,
+                "config": self.provider_account.get_config(),
+            },
+        }
 
 
 class InboundPaymentEvent(BaseModel):
@@ -226,12 +349,6 @@ class InboundPaymentEvent(BaseModel):
     name = models.CharField(max_length=255)
     slug = models.SlugField()
     description = models.TextField(blank=True)
-    provider = models.ForeignKey(
-        Provider, on_delete=models.PROTECT, related_name="inbound_payment_events"
-    )
-    provider_account = models.ForeignKey(
-        ProviderAccount, on_delete=models.PROTECT, related_name="inbound_payment_events"
-    )
     flow = models.CharField(
         max_length=20,
         choices=Flow.choices,
@@ -272,6 +389,37 @@ class InboundPaymentEvent(BaseModel):
 
     def __str__(self):
         return f"{self.system.slug}/{self.slug}"
+
+
+class InboundPaymentEventProviderConfig(EventProviderConfigBase):
+    inbound_payment_event = models.ForeignKey(
+        InboundPaymentEvent,
+        on_delete=models.CASCADE,
+        related_name="provider_configs",
+    )
+
+    class Meta:
+        ordering = ["inbound_payment_event", "organization_remote_code", "-is_active"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["inbound_payment_event", "organization_remote_code", "is_active"],
+                name="unique_inbound_event_org_config_state",
+            ),
+            models.UniqueConstraint(
+                fields=["inbound_payment_event"],
+                condition=models.Q(organization_remote_code__isnull=True, is_active=True),
+                name="unique_active_global_inbound_event_config",
+            ),
+            models.UniqueConstraint(
+                fields=["inbound_payment_event"],
+                condition=models.Q(organization_remote_code__isnull=True, is_active=False),
+                name="unique_inactive_global_inbound_config",
+            ),
+        ]
+
+    def __str__(self):
+        scope = self.organization_remote_code or "global"
+        return f"{self.inbound_payment_event} / {scope}"
 
 
 class InboundPaymentMethodToken(BaseModel):
@@ -342,6 +490,22 @@ class InboundPayment(BaseModel):
         null=True,
         blank=True,
     )
+    inbound_payment_event_provider_config = models.ForeignKey(
+        InboundPaymentEventProviderConfig,
+        on_delete=models.PROTECT,
+        related_name="inbound_payments",
+        null=True,
+        blank=True,
+        help_text="Event routing configuration selected when this payment was initiated.",
+    )
+    provider_config_snapshot = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Immutable snapshot of the selected provider, provider account, organization scope, "
+            "and provider account configuration."
+        ),
+    )
     payment_method_token = models.ForeignKey(
         InboundPaymentMethodToken,
         on_delete=models.PROTECT,
@@ -391,6 +555,24 @@ class InboundPayment(BaseModel):
     def amount_refundable(self):
         """Amount captured but not yet refunded."""
         return self.amount_captured - self.amount_refunded
+
+    def get_provider_account_config(self) -> dict:
+        snapshot = self.provider_config_snapshot or {}
+        config = snapshot.get("provider_account", {}).get("config")
+        if config is not None:
+            return config
+        if self.inbound_payment_event_provider_config_id:
+            return self.inbound_payment_event_provider_config.provider_account.get_config()
+        return {}
+
+    def get_provider_class_name(self) -> str:
+        snapshot = self.provider_config_snapshot or {}
+        class_name = snapshot.get("provider", {}).get("class_name")
+        if class_name:
+            return class_name
+        if self.inbound_payment_event_provider_config_id:
+            return self.inbound_payment_event_provider_config.provider.class_name
+        return ""
 
 
 class InboundPaymentTransaction(BaseModel):
@@ -486,16 +668,6 @@ class OutboundTransferEvent(BaseModel):
     name = models.CharField(max_length=255)
     slug = models.SlugField()
     description = models.TextField(blank=True)
-    provider = models.ForeignKey(
-        Provider,
-        on_delete=models.PROTECT,
-        related_name="outbound_transfer_events",
-    )
-    provider_account = models.ForeignKey(
-        ProviderAccount,
-        on_delete=models.PROTECT,
-        related_name="outbound_transfer_events",
-    )
     recipient_type = models.CharField(max_length=20, choices=RecipientType.choices)
     payment_method_type = models.ForeignKey(
         PaymentMethodType,
@@ -527,26 +699,52 @@ class OutboundTransferEvent(BaseModel):
 
     def clean(self):
         super().clean()
-        errors = {}
-        if (
-            self.provider_account_id
-            and self.provider_id
-            and self.provider_account.provider_id != self.provider_id
-        ):
-            errors["provider_account"] = "Provider account must belong to the selected provider."
+        self.currency = self.currency.upper()
+
+
+class OutboundTransferEventProviderConfig(EventProviderConfigBase):
+    outbound_transfer_event = models.ForeignKey(
+        OutboundTransferEvent,
+        on_delete=models.CASCADE,
+        related_name="provider_configs",
+    )
+
+    class Meta:
+        ordering = ["outbound_transfer_event", "organization_remote_code", "-is_active"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["outbound_transfer_event", "organization_remote_code", "is_active"],
+                name="unique_outbound_event_org_config_state",
+            ),
+            models.UniqueConstraint(
+                fields=["outbound_transfer_event"],
+                condition=models.Q(organization_remote_code__isnull=True, is_active=True),
+                name="unique_active_global_outbound_event_config",
+            ),
+            models.UniqueConstraint(
+                fields=["outbound_transfer_event"],
+                condition=models.Q(organization_remote_code__isnull=True, is_active=False),
+                name="unique_inactive_global_outbound_config",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
         if (
             self.provider_id
-            and self.payment_method_type_id
+            and self.outbound_transfer_event_id
+            and self.outbound_transfer_event.payment_method_type_id
             and not self.provider.payment_method_types.filter(
-                id=self.payment_method_type_id
+                id=self.outbound_transfer_event.payment_method_type_id
             ).exists()
         ):
-            errors["payment_method_type"] = (
-                "Selected provider does not support this payment method."
+            raise ValidationError(
+                {"provider": ("Selected provider does not support the event's payment method.")}
             )
-        if errors:
-            raise ValidationError(errors)
-        self.currency = self.currency.upper()
+
+    def __str__(self):
+        scope = self.organization_remote_code or "global"
+        return f"{self.outbound_transfer_event} / {scope}"
 
 
 class OutboundTransfer(BaseModel):
@@ -566,6 +764,14 @@ class OutboundTransfer(BaseModel):
         OutboundTransferEvent,
         on_delete=models.PROTECT,
         related_name="outbound_transfers",
+    )
+    outbound_transfer_event_provider_config = models.ForeignKey(
+        OutboundTransferEventProviderConfig,
+        on_delete=models.PROTECT,
+        related_name="outbound_transfers",
+        null=True,
+        blank=True,
+        help_text="Event routing configuration selected when this transfer was initiated.",
     )
     system = models.ForeignKey(
         System,
@@ -605,6 +811,14 @@ class OutboundTransfer(BaseModel):
     provider_transaction_id = models.CharField(max_length=255, blank=True)
     provider_reference = models.CharField(max_length=255, blank=True)
     response_payload = models.JSONField(default=dict, blank=True)
+    provider_config_snapshot = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Immutable snapshot of the selected provider, provider account, organization scope, "
+            "and provider account configuration."
+        ),
+    )
     failure_code = models.CharField(max_length=100, blank=True)
     failure_reason = models.TextField(blank=True)
     provider_callback_received_at = models.DateTimeField(null=True, blank=True)
@@ -630,6 +844,17 @@ class OutboundTransfer(BaseModel):
     @property
     def is_terminal(self) -> bool:
         return self.status in self.TERMINAL_STATUSES
+
+    def get_provider_account_config(self) -> dict:
+        snapshot = self.provider_config_snapshot or {}
+        config = snapshot.get("provider_account", {}).get("config")
+        if config is not None:
+            return config
+        return self.provider_account.get_config()
+
+    def get_provider_class_name(self) -> str:
+        snapshot = self.provider_config_snapshot or {}
+        return snapshot.get("provider", {}).get("class_name") or self.provider.class_name
 
 
 class OutboundTransferStateLog(BaseModel):

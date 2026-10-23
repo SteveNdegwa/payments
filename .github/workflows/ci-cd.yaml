@@ -26,6 +26,7 @@ jobs:
   build-and-trigger:
     needs: test
     runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'stage' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
