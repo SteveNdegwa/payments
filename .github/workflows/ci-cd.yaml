@@ -55,12 +55,11 @@ jobs:
       - name: Generate Docker Image Tag
         id: tag
         run: |
-          IMAGE_NAME="payments"
           TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
           ENV_NAME="${{ steps.env.outputs.env }}"
 
           # Include environment in tag for clarity and safety
-          IMAGE_TAG="${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:${ENV_NAME}-${TIMESTAMP}"
+          IMAGE_TAG="${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_REPOSITORY_NAME }}:${ENV_NAME}-${TIMESTAMP}"
 
           echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
           echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
