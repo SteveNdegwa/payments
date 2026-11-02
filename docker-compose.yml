@@ -69,3 +69,4 @@ services:
     environment:
       <<: *django-env
     restart: always
+
