@@ -162,7 +162,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     "x-api-key",
 ]
 
-BASE_URL = os.environ.get("BASE_URL", "https://payments.lipasync.com/api/v1")
+BASE_URL = os.environ.get("BASE_URL", "https://payments.solumaxventures.com/api/v1")
 
 
 # Celery
