@@ -28,7 +28,7 @@ ENV = os.environ.get("ENV", "local")
 
 SECRET_KEY = os.environ.get(
     "DJANGO_SECRET_KEY",
-    "django-insecure-cogu1s%!x&tm+it74)6inzov0bg82lympp^6*kc0@+2rz8^v28",
+    "unsafe-development-key",
 )
 
 DEBUG = _env_bool("DJANGO_DEBUG", default=True)
@@ -42,7 +42,7 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = _env_bool("USE_X_FORWARDED_HOST", default=True)
 CSRF_TRUSTED_ORIGINS = _env_list(
     "CSRF_TRUSTED_ORIGINS",
-    default=["https://payments.lipasync.com"],
+    default=[],
 )
 
 
@@ -144,7 +144,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "Africa/Nairobi"
+TIME_ZONE = os.environ.get("APP_TIME_ZONE", "Africa/Nairobi")
 USE_I18N = True
 USE_TZ = True
 
@@ -162,7 +162,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     "x-api-key",
 ]
 
-BASE_URL = os.environ.get("BASE_URL", "https://payments.solumaxventures.com/api/v1")
+BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000/api/v1")
 
 
 # Celery
