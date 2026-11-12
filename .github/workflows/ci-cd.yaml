@@ -116,5 +116,6 @@ jobs:
               "sha": "${{ github.sha }}",
               "image_tag": "${{ steps.tag.outputs.image_tag }}",
               "docker_compose_b64": "${{ steps.compose.outputs.b64 }}",
+              "env_variables": ${{ toJson(vars) }},
               "env_secrets": ${{ steps.prepare_secrets.outputs.secrets_json }}
             }

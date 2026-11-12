@@ -31,6 +31,7 @@ services:
     labels:
       <<: *common-labels
       observability.component: api
+    env_file: .env
     environment:
       <<: *django-env
     ports:
@@ -44,6 +45,7 @@ services:
       <<: *common-labels
       observability.component: celery-worker-high
     command: celery -A payments worker -Q payments.high -c 4 -l INFO
+    env_file: .env
     environment:
       <<: *django-env
     restart: always
@@ -55,6 +57,7 @@ services:
       <<: *common-labels
       observability.component: celery-worker-low
     command: celery -A payments worker -Q payments.low -c 2 -l INFO
+    env_file: .env
     environment:
       <<: *django-env
     restart: always
@@ -66,6 +69,7 @@ services:
       <<: *common-labels
       observability.component: celery-beat
     command: celery -A payments beat -l INFO
+    env_file: .env
     environment:
       <<: *django-env
     restart: always
